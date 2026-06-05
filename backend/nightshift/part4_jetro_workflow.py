@@ -1,0 +1,381 @@
+"""Part 4 — Jetro Workflow (spec §6)."""
+from __future__ import annotations
+
+import datetime
+from collections import defaultdict
+from typing import Any
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+
+from . import constants as K
+from .codes import code_key
+from .sheet_utils import (
+    find_sheet,
+    header_map,
+    iter_data_rows,
+    find_header_row,
+)
+
+from .pdf_utils import render_keep_together_pdf
+from .report_styles import (
+    set_column_widths,
+    style_column_header_row,
+    style_data_row,
+    style_group_band,
+)
+
+try:
+    from weasyprint import HTML, CSS
+except ImportError:
+    HTML = None
+    CSS = None
+
+def build_jetro_branch(wb: Workbook, job_dir: str) -> dict[str, dict[str, str]]:
+    """Spec §6 — Sort Jetro, build Jetro page, Produce sheet, and PDF report."""
+    
+    # 1. Sort Jetro Source (Spec §6.3)
+    _sort_jetro_source(wb)
+    
+    outputs = {}
+    
+    # 2. Jetro Report PDF (Spec §6.5) - Run first to get page numbers
+    jetro_pdf, page_map, blocks = _build_jetro_pdf(wb, job_dir)
+    outputs["jetroPdf"] = {"pdf": jetro_pdf}
+    
+    # 3. Jetro Excel Page & Produce Sheet (Spec §6.4, §6.7, §6.6)
+    jetro_xlsx = _build_jetro_excel(wb, job_dir, blocks, page_map)
+    outputs["jetroWorkbook"] = {"xlsx": jetro_xlsx}
+    
+    return outputs
+
+def _get_driver_sequence(wb: Workbook) -> list[str]:
+    # Driver Setup has only 2 columns (Order, Freezer group), so iter_data_rows'
+    # 4-cell minimum filter would skip every row. Read it directly instead.
+    try:
+        ws = find_sheet(wb, K.SHEET_DRIVER_SETUP)
+        seq: list[str] = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            val = row[0] if row else None
+            if val not in (None, ""):
+                seq.append(str(val).strip())
+        if seq:
+            return seq
+    except KeyError:
+        pass
+    return list(K.DEFAULT_JETRO_DRIVER_ORDER)
+
+def _sort_jetro_source(wb: Workbook) -> None:
+    try:
+        ws = find_sheet(wb, K.SHEET_JETRO_SOURCE)
+        h_idx = find_header_row(ws, "Driver", "Name", "Bin")
+        hmap = header_map(ws, known_headers=["Driver", "Name", "Bin"])
+        driver_col = hmap.get("Driver")
+        cust_col = hmap.get("Name")
+        bin_col = hmap.get("Bin")
+        
+        if not (driver_col and cust_col and bin_col): return
+        
+        seq = _get_driver_sequence(wb)
+        driver_rank = {name: i for i, name in enumerate(seq)}
+        
+        headers = [c.value for c in ws[h_idx]]
+        rows = []
+        for _, values in iter_data_rows(ws, known_headers=["Driver", "Name", "Bin"]):
+            rows.append(list(values))
+            
+        def sort_key(r):
+            d = str(r[driver_col-1] or "")
+            c = str(r[cust_col-1] or "").lower()
+            try:
+                b = float(r[bin_col-1] or 0)
+            except (ValueError, TypeError):
+                b = 999
+            return (driver_rank.get(d, 999), c, b)
+            
+        rows.sort(key=sort_key)
+        
+        ws.delete_rows(h_idx, ws.max_row)
+        ws.append(headers)
+        for r in rows:
+            ws.append(r)
+    except KeyError:
+        pass
+
+def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]], page_map: list[tuple[int, int]]) -> str:
+    out_wb = Workbook()
+    ws_jetro = out_wb.active
+    ws_jetro.title = "Jetro Page"
+    
+    today = datetime.date.today().strftime("%m/%d/%Y")
+    
+    # Relevant columns from SHEET_JETRO_SOURCE
+    src = find_sheet(wb, K.SHEET_JETRO_SOURCE)
+    known = ["Qty", "Product Name", "Code", "Bin", "Description", "Name", "Transaction Date", "Driver", "CATEGORY NAME", "Product", "New bin", "Quantity On Hand", "BIN(Internal)", "BIN (Internal)", "internal bin", "BIN"]
+    hmap = header_map(src, known_headers=known)
+    
+    qty_idx = hmap.get("Qty")
+    pname_idx = hmap.get("Product Name")
+    code_idx = hmap.get("Code")
+    bin_idx = hmap.get("Bin")
+    # Internal Bin mapping
+    internal_bin_idx = hmap.get("BIN(Internal)") or hmap.get("BIN (Internal)") or hmap.get("internal bin") or hmap.get("BIN") or bin_idx
+    desc_idx = hmap.get("Description")
+    cust_idx = hmap.get("Name")
+    cat_idx = hmap.get("CATEGORY NAME")
+    prod_idx = hmap.get("Product")
+    new_bin_idx = hmap.get("New bin")
+    qoh_idx = hmap.get("Quantity On Hand")
+        
+    headers = ["Internal bin", "New bin", "Qty", "Product", "QTY OH"]
+    n_cols = len(headers)
+    center_cols = {3, 5}
+    set_column_widths(ws_jetro, [14, 12, 8, 60, 10])
+    current_row = 1
+
+    for block in blocks:
+        cname = block["customer"]
+        rows = block["rows"]
+        title = block["title"]
+
+        ws_jetro.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        ws_jetro.cell(row=current_row, column=1, value=title)
+        style_group_band(ws_jetro, current_row, n_cols)
+        current_row += 1
+
+        for i, h in enumerate(headers, start=1):
+            ws_jetro.cell(row=current_row, column=i, value=h)
+        style_column_header_row(ws_jetro, current_row, n_cols)
+        current_row += 1
+
+        for r in rows:
+            # Col A shows Internal bin (per the office's update). The New bin
+            # blanking rule, however, follows PRD §6.4: blank New bin when it
+            # equals the numeric Jetro Bin (column F).
+            ib_val = r[internal_bin_idx-1] if internal_bin_idx and internal_bin_idx <= len(r) else ""
+            bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""
+            new_bin_val = r[new_bin_idx-1] if new_bin_idx and new_bin_idx <= len(r) else ""
+            if str(new_bin_val).strip().upper() == str(bin_val).strip().upper():
+                new_bin_val = ""
+
+            # Product merge: ProductName/Description/Product/Code
+            pname = r[pname_idx-1] if pname_idx and pname_idx <= len(r) else ""
+            desc = r[desc_idx-1] if desc_idx and desc_idx <= len(r) else ""
+            prod = r[prod_idx-1] if prod_idx and prod_idx <= len(r) else ""
+            code = r[code_idx-1] if code_idx and code_idx <= len(r) else ""
+            p_merge = f"{pname}/{desc}/{prod}/{code}".replace("//", "/").replace("//", "/")
+
+            row_data = [
+                ib_val,
+                new_bin_val,
+                r[qty_idx-1] if qty_idx and qty_idx <= len(r) else "",
+                p_merge,
+                r[qoh_idx-1] if qoh_idx and qoh_idx <= len(r) else ""
+            ]
+            for i, v in enumerate(row_data, start=1):
+                ws_jetro.cell(row=current_row, column=i, value=v)
+            style_data_row(ws_jetro, current_row, n_cols, center_cols=center_cols)
+
+            # Produce shading overlays the base data styling.
+            is_produce = str(r[cat_idx-1]).lower() == "produce" if cat_idx and cat_idx <= len(r) else False
+            if is_produce:
+                fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+                for i in range(1, n_cols + 1):
+                    ws_jetro.cell(row=current_row, column=i).fill = fill
+
+            current_row += 1
+        current_row += 1
+
+    # --- Jetro Produce Sheet (Spec §6.7) ---
+    ws_prod = out_wb.create_sheet("Jetro Produce Sheet")
+    prod_headers = ["Internal bin", "New bin", "Qty", "Total qty", "Product Info", "Sell price", "Cost price", "JTR U COST", "JTR C cost", "Customer name", "Driver name"]
+    prod_n_cols = len(prod_headers)
+    prod_numeric_cols = {3, 4, 6, 7, 8, 9}
+    set_column_widths(ws_prod, [12, 10, 8, 10, 50, 12, 12, 12, 12, 28, 16])
+
+    # Filter produce rows
+    produce_rows = []
+    for _, values in iter_data_rows(src):
+        if cat_idx and cat_idx <= len(values) and str(values[cat_idx-1]).lower() == "produce":
+            produce_rows.append(values)
+
+    # Sort by Internal Bin, then Product Name
+    ib_idx = (internal_bin_idx - 1) if internal_bin_idx else -1
+    produce_rows.sort(key=lambda x: (str(x[ib_idx] or "") if ib_idx >= 0 and ib_idx < len(x) else "",
+                                     str(x[pname_idx-1] or "").lower() if pname_idx and pname_idx <= len(x) else ""))
+
+    # Write headers
+    for i, h in enumerate(prod_headers, start=1):
+        ws_prod.cell(row=1, column=i, value=h)
+    style_column_header_row(ws_prod, 1, prod_n_cols)
+        
+    # Calculate totals for repeated product names
+    totals = defaultdict(float)
+    for r in produce_rows:
+        if pname_idx and pname_idx <= len(r) and qty_idx and qty_idx <= len(r):
+            totals[str(r[pname_idx-1]).lower()] += float(r[qty_idx-1] or 0)
+        
+    seen_pnames = set()
+    for i, r in enumerate(produce_rows, start=2):
+        pname = str(r[pname_idx-1]).lower() if pname_idx and pname_idx <= len(r) else ""
+        tqty = ""
+        if pname not in seen_pnames:
+            tqty = totals[pname]
+            seen_pnames.add(pname)
+            
+        ib_val = r[internal_bin_idx-1] if internal_bin_idx and internal_bin_idx <= len(r) else ""
+        bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""
+        new_bin_val = r[new_bin_idx-1] if new_bin_idx and new_bin_idx <= len(r) else ""
+        # PRD §6.7: blank New bin when it equals the Jetro Bin (column F).
+        if str(new_bin_val).strip().upper() == str(bin_val).strip().upper(): new_bin_val = ""
+        
+        # Product Info: ProductName/Product/Code
+        p_info = f"{r[pname_idx-1] if pname_idx and pname_idx <= len(r) else ''}/{r[prod_idx-1] if prod_idx and prod_idx <= len(r) else ''}/{r[code_idx-1] if code_idx and code_idx <= len(r) else ''}".replace("//", "/")
+        
+        row_data = [
+            ib_val,
+            new_bin_val,
+            r[qty_idx-1] if qty_idx and qty_idx <= len(r) else "",
+            tqty,
+            p_info,
+            # Sell price = Price (column M) per PRD §6.7/§6.1.
+            (r[hmap.get("Price")-1] if hmap.get("Price") and hmap.get("Price") <= len(r) else ""),
+            r[hmap.get("CURRENT COST PRICE")-1] if hmap.get("CURRENT COST PRICE") and hmap.get("CURRENT COST PRICE") <= len(r) else (r[hmap.get("Cost")-1] if hmap.get("Cost") and hmap.get("Cost") <= len(r) else ""),
+            r[hmap.get("unit price")-1] if hmap.get("unit price") and hmap.get("unit price") <= len(r) else "",
+            r[hmap.get("case price")-1] if hmap.get("case price") and hmap.get("case price") <= len(r) else "",
+            r[cust_idx-1] if cust_idx and cust_idx <= len(r) else "",
+            r[hmap.get("Driver")-1] if hmap.get("Driver") and hmap.get("Driver") <= len(r) else ""
+        ]
+        for ci, v in enumerate(row_data, start=1):
+            cell = ws_prod.cell(row=i, column=ci, value=v)
+            if ci in (6, 7, 8, 9): cell.number_format = K.NUMBER_FORMAT_PRECISION
+        style_data_row(ws_prod, i, prod_n_cols, numeric_cols=prod_numeric_cols)
+
+    # --- Menu Page (Spec §6.6) ---
+    # page_map holds (start_page, end_page) per block. Orders that span more
+    # than one page show a range like "3-6"; single-page orders show "3".
+    ws_menu = out_wb.create_sheet("Menu Page")
+    menu_headers = ["Page number", "Customer Orders", "Pulled by"]
+    menu_n_cols = len(menu_headers)
+    set_column_widths(ws_menu, [16, 50, 28])
+    for i, h in enumerate(menu_headers, start=1):
+        ws_menu.cell(row=1, column=i, value=h)
+    style_column_header_row(ws_menu, 1, menu_n_cols)
+    for ridx, (block, pages) in enumerate(zip(blocks, page_map), start=2):
+        start, end = pages
+        page_label = f"{start}-{end}" if end > start else f"{start}"
+        ws_menu.cell(row=ridx, column=1, value=page_label)
+        ws_menu.cell(row=ridx, column=2, value=block["customer"])
+        ws_menu.cell(row=ridx, column=3, value="")
+        style_data_row(ws_menu, ridx, menu_n_cols, center_cols={1})
+    
+    xlsx_path = f"{job_dir}/jetro.xlsx"
+    out_wb.save(xlsx_path)
+    return "jetro.xlsx"
+
+def _build_jetro_pdf(wb: Workbook, job_dir: str) -> tuple[str, list[tuple[int, int]], list[dict[str, Any]]]:
+    if not HTML: return "", [], []
+    
+    src = find_sheet(wb, K.SHEET_JETRO_SOURCE)
+    known = ["Qty", "Product Name", "Code", "Bin", "Description", "Name", "Transaction Date", "Driver", "CATEGORY NAME", "Product", "New bin", "Quantity On Hand", "BIN(Internal)", "BIN (Internal)", "internal bin", "BIN"]
+    hmap = header_map(src, known_headers=known)
+    
+    qty_idx = hmap.get("Qty")
+    pname_idx = hmap.get("Product Name")
+    code_idx = hmap.get("Code")
+    bin_idx = hmap.get("Bin")
+    internal_bin_idx = hmap.get("BIN(Internal)") or hmap.get("BIN (Internal)") or hmap.get("internal bin") or hmap.get("BIN") or bin_idx
+    desc_idx = hmap.get("Description")
+    cust_idx = hmap.get("Name")
+    date_idx = hmap.get("Transaction Date")
+    driver_idx = hmap.get("Driver")
+    cat_idx = hmap.get("CATEGORY NAME")
+    prod_idx = hmap.get("Product")
+    new_bin_idx = hmap.get("New bin")
+    qoh_idx = hmap.get("Quantity On Hand")
+    
+    today = datetime.date.today().strftime("%m/%d/%Y")
+    
+    # Group by customer
+    blocks = []
+    current_cust = None
+    cust_rows = []
+    for _, values in iter_data_rows(src, known_headers=known):
+        cname = str(values[cust_idx-1] or "Unknown") if cust_idx else "Unknown"
+        if cname != current_cust:
+            if current_cust:
+                date_val = cust_rows[0][date_idx-1] if date_idx else today
+                driver_val = cust_rows[0][driver_idx-1] if driver_idx else ""
+                blocks.append({
+                    "title": f"{current_cust} | {date_val} | {driver_val}",
+                    "rows": cust_rows,
+                    "customer": current_cust
+                })
+            current_cust = cname
+            cust_rows = []
+        cust_rows.append(values)
+    if current_cust:
+        date_val = cust_rows[0][date_idx-1] if date_idx else today
+        driver_val = cust_rows[0][driver_idx-1] if driver_idx else ""
+        blocks.append({
+            "title": f"{current_cust} | {date_val} | {driver_val}",
+            "rows": cust_rows,
+            "customer": current_cust
+        })
+
+    def template(block, font_size):
+        rows_html = ""
+        for r in block["rows"]:
+            # Col A shows Internal bin (office update); New bin blanking follows
+            # PRD §6.4: blank when it equals the Jetro Bin (column F).
+            ib_val = r[internal_bin_idx-1] if internal_bin_idx and internal_bin_idx <= len(r) else ""
+            bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""
+            new_bin_val = r[new_bin_idx-1] if new_bin_idx and new_bin_idx <= len(r) else ""
+            if str(new_bin_val).strip().upper() == str(bin_val).strip().upper(): new_bin_val = ""
+            
+            pname = r[pname_idx-1] if pname_idx and pname_idx <= len(r) else ""
+            desc = r[desc_idx-1] if desc_idx and desc_idx <= len(r) else ""
+            prod = r[prod_idx-1] if prod_idx and prod_idx <= len(r) else ""
+            code = r[code_idx-1] if code_idx and code_idx <= len(r) else ""
+            p_merge = f"{pname}/{desc}/{prod}/{code}".replace("//", "/")
+            
+            is_produce = str(r[cat_idx-1]).lower() == "produce" if cat_idx and cat_idx <= len(r) else False
+            
+            rows_html += f"""
+                <tr class="{'produce' if is_produce else ''}">
+                    <td>{ib_val}</td>
+                    <td>{new_bin_val}</td>
+                    <td class="centered">{r[qty_idx-1] if qty_idx and qty_idx <= len(r) else ""}</td>
+                    <td>{p_merge}</td>
+                    <td class="centered">{r[qoh_idx-1] if qoh_idx and qoh_idx <= len(r) else ""}</td>
+                </tr>
+            """
+            
+        return f"""
+        <div style="font-size: {font_size}pt;">
+            <style>
+                .produce {{ background-color: #f9f9f9; }}
+                .centered {{ text-align: center; }}
+            </style>
+            <table>
+                <thead>
+                    <tr><th colspan="5" class="header">{block['title']}</th></tr>
+                    <tr>
+                        <th>Internal bin</th>
+                        <th>New bin</th>
+                        <th class="centered">Qty</th>
+                        <th>Product</th>
+                        <th class="centered">QTY OH</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table>
+        </div>
+        """
+        
+    pdf_path = f"{job_dir}/jetro_report.pdf"
+    page_map = render_keep_together_pdf(blocks, pdf_path, template, landscape=True)
+    
+    return "jetro_report.pdf", page_map, blocks
