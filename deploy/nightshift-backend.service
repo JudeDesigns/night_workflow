@@ -1,0 +1,27 @@
+[Unit]
+Description=Night Shift Reports – FastAPI backend
+After=network.target
+
+[Service]
+# Running as root (change to a dedicated user later if desired)
+User=root
+Group=root
+
+WorkingDirectory=/opt/night_workflow/backend
+
+# Activate the venv and launch Uvicorn.
+# --host 127.0.0.1 keeps the socket off public interfaces; Nginx proxies it.
+# --workers 2  is fine for the expected single-office load; raise if needed.
+ExecStart=/opt/night_workflow/.venv/bin/uvicorn server:app \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --workers 2 \
+    --log-level info
+
+Restart=on-failure
+RestartSec=5
+
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
