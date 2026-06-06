@@ -34,54 +34,75 @@ def render_keep_together_pdf(
     avail_points = (7.5 if landscape else 10.0) * 72
     
     base_css = f"""
-        @page {{ 
-            size: {page_size}; 
-            margin: 0.5in; 
+        @page {{
+            size: {page_size};
+            margin: 0.5in;
             @bottom-right {{
                 content: "Page " counter(page);
                 font-size: 8pt;
             }}
         }}
         body {{ font-family: sans-serif; margin: 0; padding: 0; }}
-        table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
-        th, td {{ border: 1px solid black; padding: 4px; text-align: left; word-wrap: break-word; line-height: 1.2; }}
+        table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; table-layout: fixed; }}
+        th, td {{ border: 1px solid black; padding: 4px; text-align: left; word-wrap: break-word; overflow-wrap: anywhere; line-height: 1.2; }}
+        /* Spec §10 — spanned group headers (vendor/driver/customer + date) are always centered. */
         .header {{ text-align: center; font-weight: bold; background-color: #eee; }}
-        .centered {{ text-align: center; }}
+        .centered, td.centered, th.centered {{ text-align: center; }}
+        /* Z-driver rows (future deliveries / pickups) — distinct grey shade. */
+        tr.z-driver td {{ background-color: #B5BFC9; }}
+        /* Produce rows (Jetro page) — lighter grey. */
+        tr.produce td {{ background-color: #D3D3D3; }}
     """
 
+    def _fits_one_page(block: dict[str, Any], font_size: float) -> bool:
+        """Render the block standalone and return True iff it fits on 1 page."""
+        block_html = template_func(block, font_size)
+        temp_html = f"<html><head><style>{base_css}</style></head><body>{block_html}</body></html>"
+        doc = HTML(string=temp_html).render(stylesheets=[CSS(string=base_css)])
+        return len(doc.pages) <= 1
+
     final_html_parts = []
-    
+
+    # Spec §8.4 keep-together: every atomic block must fit on a single page.
+    # Strategy:
+    #   1. Start at 10pt (the ideal readable size).
+    #   2. If a heuristic suggests we need to start smaller (long blocks), do so.
+    #   3. Verify by rendering standalone; if it still overflows, shrink by
+    #      0.88x and re-verify. Loop up to MAX_ATTEMPTS times. There is no hard
+    #      minimum font floor (spec: "fitting on one page always wins").
+    MAX_ATTEMPTS = 10
+    SHRINK_FACTOR = 0.88
+    HARD_MIN = 3.5  # Practical floor — below this, the page is nearly unreadable
+                    # anyway and we accept the result rather than loop forever.
+
     for i, block in enumerate(blocks):
         row_count = len(block.get("rows", []))
-        # Estimate: Each row takes roughly 1.4em in height (font-size * 1.4)
-        # Plus 2 rows for header and column headers.
-        
-        # 1. Short-circuit for small blocks
-        if row_count <= 15:
+
+        # Heuristic initial guess. The 1.7 factor (vs the old 1.4) accounts for
+        # product-name wrapping that frequently doubles row height in practice.
+        if row_count <= 12:
             best_font = 10.0
         else:
-            # 2. Heuristic Initial Guess
-            # We want (row_count + 3) * (font_size * 1.4) <= avail_points
-            # font_size <= avail_points / ((row_count + 3) * 1.4)
-            heuristic_font = avail_points / ((row_count + 4) * 1.4)
-            best_font = min(10.0, max(1.0, heuristic_font))
-            
-            # 3. Single-pass Verification
-            # Render once at the heuristic font size. 
-            # If it still doesn't fit, scale down by another 10% once.
-            block_html = template_func(block, best_font)
-            temp_html = f"<html><head><style>{base_css}</style></head><body>{block_html}</body></html>"
-            doc = HTML(string=temp_html).render(stylesheets=[CSS(string=base_css)])
-            
-            if len(doc.pages) > 1:
-                best_font *= 0.85 # Safety factor if heuristic was too aggressive
-        
-        # Add to final document
-        # We use 'page-break-before: always' for every block except the first one
-        # to ensure they stay on their own pages if they were scaled.
-        # Small blocks that weren't scaled can share pages if they fit.
+            heuristic = avail_points / ((row_count + 5) * 1.7)
+            best_font = min(10.0, max(HARD_MIN, heuristic))
+
+        # Iterative verification: shrink until the block fits on one page.
+        attempts = 0
+        while attempts < MAX_ATTEMPTS and best_font >= HARD_MIN:
+            if _fits_one_page(block, best_font):
+                break
+            best_font *= SHRINK_FACTOR
+            attempts += 1
+        else:
+            # Loop exited without fitting; clamp to HARD_MIN and accept.
+            best_font = max(best_font, HARD_MIN)
+
+        # When the block needed scaling, force it onto its own page so
+        # neighbouring blocks can't push it across a boundary at render time.
         css_class = "block-force-new-page" if best_font < 10.0 else "block-avoid-break"
-        final_html_parts.append(f'<div id="block-{i}" class="{css_class}">{template_func(block, best_font)}</div>')
+        final_html_parts.append(
+            f'<div id="block-{i}" class="{css_class}">{template_func(block, best_font)}</div>'
+        )
 
     full_html = f"""
     <html>

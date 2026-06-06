@@ -20,6 +20,8 @@ from .sheet_utils import (
 
 from .pdf_utils import render_keep_together_pdf
 from .report_styles import (
+    apply_z_driver_shading,
+    is_z_driver,
     set_column_widths,
     style_column_header_row,
     style_data_row,
@@ -37,24 +39,33 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 def build_final_pick_sheets(wb: Workbook, job_dir: str) -> dict[str, dict[str, str]]:
-    """Spec §5 — Build Excel and PDF reports for PO, Dry, Freezer, and WH Pickup."""
-    
+    """Spec §5 — Build Excel and PDF reports for PO, Dry, Freezer, and WH Pickup.
+
+    Returns an outputs map where the Dry / Freezer / WH Pickup PDFs are
+    emitted as separate files alongside the combined pick_sheets.xlsx, per
+    operational request (so the warehouse can hand each driver only the
+    sheets they need).
+    """
+
     # 1. Re-order All Orders (Spec §5.1)
     _reorder_all_orders(wb)
-    
+
     outputs = {}
-    
+
     # 2. Block 1 — PO by Vendors (Spec §5.2)
     po_xlsx, po_pdf = _build_po_report(wb, job_dir)
     outputs["poReport"] = {"xlsx": po_xlsx, "pdf": po_pdf}
-    
-    # 3. Block 2, 3, 4 — Dry, Freezer, WH Pickup
-    # These are often combined or separate. Spec §7.6 says:
-    # Card: Dry + Freezer + WH Pickup | Excel: All three | PDF: All three
-    
-    combined_xlsx, combined_pdf = _build_combined_pick_sheets(wb, job_dir)
-    outputs["dryFreezerWh"] = {"xlsx": combined_xlsx, "pdf": combined_pdf}
-    
+
+    # 3. Block 2, 3, 4 — Dry, Freezer, WH Pickup. One combined xlsx; three
+    # separate PDFs so each can be printed and handed out independently.
+    pdf_paths = _build_combined_pick_sheets(wb, job_dir)
+    outputs["dryFreezerWh"] = {
+        "xlsx": pdf_paths["xlsx"],
+        "dryPdf": pdf_paths["dryPdf"],
+        "freezerPdf": pdf_paths["freezerPdf"],
+        "whPickupPdf": pdf_paths["whPickupPdf"],
+    }
+
     return outputs
 
 # ---------------------------------------------------------------------------
@@ -169,7 +180,8 @@ def _build_po_report(wb: Workbook, job_dir: str) -> tuple[str, str]:
     driver_idx = hmap.get("Driver")
 
     n_cols = len(headers)
-    numeric_cols = {1, 2, 5, 6, 7}
+    # Qty / Total Qty / Price / Cost / Jetro cost — all centered per spec §10.
+    center_cols = {1, 2, 5, 6, 7}
     set_column_widths(ws, [8, 10, 50, 12, 12, 14, 12, 28, 14])
 
     current_row = 1
@@ -201,35 +213,39 @@ def _build_po_report(wb: Workbook, job_dir: str) -> tuple[str, str]:
                 vals[name_idx - 1] if name_idx else "",
                 vals[driver_idx - 1] if driver_idx else "",
             ]
-            formatted_vendor_groups[vendor].append(row_data)
+            is_z = is_z_driver(row_data[8])
+            formatted_vendor_groups[vendor].append({"cells": row_data, "z": is_z})
             for i, v in enumerate(row_data, start=1):
                 ws.cell(row=current_row, column=i, value=v)
-            style_data_row(ws, current_row, n_cols, numeric_cols=numeric_cols)
+            style_data_row(ws, current_row, n_cols, center_cols=center_cols)
+            if is_z:
+                apply_z_driver_shading(ws, current_row, n_cols)
             current_row += 1
         current_row += 1 # Gap between vendors
 
     xlsx_path = f"{job_dir}/po_report.xlsx"
     out_wb.save(xlsx_path)
     
-    # PDF generation
+    # PDF generation — center Qty/Price columns; pin column widths so wide
+    # product names cannot overflow the page (spec §10 keep-together).
     pdf_path = f"{job_dir}/po_report.pdf"
-    _generate_pdf_generic(formatted_vendor_groups, headers, "PO Report", pdf_path, today)
-    
+    po_widths = ["6%", "7%", "30%", "10%", "8%", "11%", "8%", "14%", "6%"]
+    _generate_pdf_generic(
+        formatted_vendor_groups, headers, "PO Report", pdf_path, today,
+        center_cols=center_cols, col_widths_pct=po_widths,
+    )
+
     return "po_report.xlsx", "po_report.pdf"
 
-def _build_combined_pick_sheets(wb: Workbook, job_dir: str) -> tuple[str, str]:
-    # This combines Dry, Freezer, and WH Pickup
+def _build_combined_pick_sheets(wb: Workbook, job_dir: str) -> dict[str, str]:
+    """One xlsx (3 sheets: Dry / Freezer / WH Pickup) plus three separate PDFs
+    so each can be printed and handed out independently."""
     out_wb = Workbook()
 
     today = datetime.date.today().strftime("%m/%d/%Y")
 
-    # 1. Dry by Driver
     _add_dry_sheet(wb, out_wb, today)
-
-    # 2. Freezer Page
     _add_freezer_sheet(wb, out_wb, today)
-
-    # 3. WH Pickup
     _add_wh_pickup_sheet(wb, out_wb, today)
 
     # Workbook() seeds a blank "Sheet" tab; drop it now that the real
@@ -240,13 +256,18 @@ def _build_combined_pick_sheets(wb: Workbook, job_dir: str) -> tuple[str, str]:
 
     xlsx_path = f"{job_dir}/pick_sheets.xlsx"
     out_wb.save(xlsx_path)
-    
-    pdf_path = f"{job_dir}/pick_sheets.pdf"
-    # For now, a simple combined PDF or separate ones. 
-    # Spec says one PDF for all three.
-    _generate_combined_pdf(wb, pdf_path, today)
-    
-    return "pick_sheets.xlsx", "pick_sheets.pdf"
+
+    # Separate PDFs (operational request: one file per pick area).
+    _generate_dry_pdf(wb, f"{job_dir}/dry.pdf", today)
+    _generate_freezer_pdf(wb, f"{job_dir}/freezer.pdf", today)
+    _generate_wh_pickup_pdf(wb, f"{job_dir}/wh_pickup.pdf", today)
+
+    return {
+        "xlsx": "pick_sheets.xlsx",
+        "dryPdf": "dry.pdf",
+        "freezerPdf": "freezer.pdf",
+        "whPickupPdf": "wh_pickup.pdf",
+    }
 
 def _add_dry_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
     ws_src = find_sheet(wb, K.SHEET_ALL_ORDERS)
@@ -276,10 +297,11 @@ def _add_dry_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
             driver_seq.append(extra)
         
     ws = out_wb.create_sheet("Dry by Driver")
-    headers = ["Internal bin", "Bin", "QTY", "Product Name", "Vendor", "Customer", "Driver", "QTY OH"]
+    # PRD §5.3 — Bin column dropped (always "DRY" inside this report).
+    headers = ["Internal bin", "QTY", "Product Name", "Vendor", "Customer", "Driver", "QTY OH"]
     n_cols = len(headers)
-    numeric_cols = {3, 8}
-    set_column_widths(ws, [12, 10, 8, 50, 28, 28, 14, 10])
+    center_cols = {2, 7}
+    set_column_widths(ws, [12, 8, 50, 28, 28, 14, 10])
 
     pname_idx = hmap.get("Product Name")
     desc_idx = hmap.get("Description")
@@ -308,6 +330,7 @@ def _add_dry_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
         style_column_header_row(ws, current_row, n_cols)
         current_row += 1
 
+        driver_is_z = is_z_driver(driver)
         for r in rows:
             pn_val = str(r[pname_idx-1] or "") if pname_idx and pname_idx <= len(r) else ""
             ds_val = str(r[desc_idx-1] or "") if desc_idx and desc_idx <= len(r) else ""
@@ -315,7 +338,6 @@ def _add_dry_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
 
             row_data = [
                 r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else "",
-                r[bin_col-1] if bin_col and bin_col <= len(r) else "",
                 r[qty_idx-1] if qty_idx and qty_idx <= len(r) else "",
                 pname,
                 r[vendor_idx-1] if vendor_idx and vendor_idx <= len(r) else "",
@@ -325,7 +347,9 @@ def _add_dry_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
             ]
             for i, v in enumerate(row_data, start=1):
                 ws.cell(row=current_row, column=i, value=v)
-            style_data_row(ws, current_row, n_cols, numeric_cols=numeric_cols)
+            style_data_row(ws, current_row, n_cols, center_cols=center_cols)
+            if driver_is_z:
+                apply_z_driver_shading(ws, current_row, n_cols)
             current_row += 1
         current_row += 1
 
@@ -358,7 +382,7 @@ def _add_freezer_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
     ws = out_wb.create_sheet("Freezer Page")
     headers = ["Internal bin", "QTY", "Total Qty", "Product Name", "Customer", "QTY OH"]
     n_cols = len(headers)
-    numeric_cols = {2, 3, 6}
+    center_cols = {2, 3, 6}
     set_column_widths(ws, [14, 8, 10, 50, 28, 10])
 
     current_row = 1
@@ -407,7 +431,10 @@ def _add_freezer_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
             ]
             for i, v in enumerate(row_data, start=1):
                 ws.cell(row=current_row, column=i, value=v)
-            style_data_row(ws, current_row, n_cols, numeric_cols=numeric_cols)
+            style_data_row(ws, current_row, n_cols, center_cols=center_cols)
+            driver_val = r[driver_col-1] if driver_col and driver_col <= len(r) else ""
+            if is_z_driver(driver_val):
+                apply_z_driver_shading(ws, current_row, n_cols)
             current_row += 1
         current_row += 1
 
@@ -440,7 +467,7 @@ def _add_wh_pickup_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
     ws = out_wb.create_sheet("WH Pickup")
     headers = ["QTY", "Product Name", "Bin", "Internal bin", "Vendor", "Driver", "QTY OH"]
     n_cols = len(headers)
-    numeric_cols = {1, 7}
+    center_cols = {1, 7}
     set_column_widths(ws, [8, 50, 10, 14, 28, 14, 10])
 
     current_row = 1
@@ -473,18 +500,21 @@ def _add_wh_pickup_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
             ds_val = str(r[desc_col-1] or "") if desc_col and desc_col <= len(r) else ""
             pname = (pn_val + " " + ds_val).strip()
 
+            driver_val = r[driver_col-1] if driver_col and driver_col <= len(r) else ""
             row_data = [
                 r[qty_col-1] if qty_col and qty_col <= len(r) else "",
                 pname,
                 r[bin_col-1] if bin_col and bin_col <= len(r) else "",
                 r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else "",
                 r[vendor_col-1] if vendor_col and vendor_col <= len(r) else "",
-                r[driver_col-1] if driver_col and driver_col <= len(r) else "",
+                driver_val,
                 r[qoh_col-1] if qoh_col and qoh_col <= len(r) else "",
             ]
             for i, v in enumerate(row_data, start=1):
                 ws.cell(row=current_row, column=i, value=v)
-            style_data_row(ws, current_row, n_cols, numeric_cols=numeric_cols)
+            style_data_row(ws, current_row, n_cols, center_cols=center_cols)
+            if is_z_driver(driver_val):
+                apply_z_driver_shading(ws, current_row, n_cols)
             current_row += 1
         current_row += 1
 
@@ -492,87 +522,115 @@ def _add_wh_pickup_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
 # PDF Generation Helpers
 # ---------------------------------------------------------------------------
 
-def _generate_pdf_generic(groups, headers, title, output_path, date):
+def _generate_pdf_generic(groups, headers, title, output_path, date, center_cols=None, col_widths_pct=None):
+    """Generic PDF generator. center_cols is a 1-based set of column indices to
+    horizontally center. col_widths_pct is a list of % strings matching headers
+    length (e.g. ['10%', '20%', ...])."""
     if not HTML: return
-    
+
+    center_cols = set(center_cols or [])
+
     blocks = []
     for group_name in sorted(groups.keys()):
         blocks.append({
             "title": f"{group_name} - {date}",
             "headers": headers,
-            "rows": groups[group_name]
+            "rows": groups[group_name],
+            "center_cols": center_cols,
+            "col_widths_pct": col_widths_pct,
         })
-        
-    def template(block, font_size):
-        rows_html = ""
-        for r in block["rows"]:
-            rows_html += "<tr>" + "".join(f"<td>{v if v is not None else ''}</td>" for v in r[:len(block['headers'])]) + "</tr>"
-            
-        return f"""
-        <div style="font-size: {font_size}pt;">
-            <table>
-                <thead>
-                    <tr><th colspan="{len(block['headers'])}" class="header">{block['title']}</th></tr>
-                    <tr>{" ".join(f"<th>{h}</th>" for h in block['headers'])}</tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table>
-        </div>
-        """
-        
-    render_keep_together_pdf(blocks, output_path, template)
 
-def _generate_combined_pdf(wb, output_path, date):
+    render_keep_together_pdf(blocks, output_path, _block_template)
+
+
+def _block_template(block, font_size):
+    """Shared HTML template for both _generate_pdf_generic and the combined
+    PDF. Supports per-column centering + widths and `tr.z-driver` shading on
+    rows where the office's selected driver is "Z" (future delivery)."""
+    hdrs = block["headers"]
+    c_cols = block.get("center_cols") or set()
+    widths = block.get("col_widths_pct") or []
+    col_html = ""
+    if widths and len(widths) == len(hdrs):
+        col_html = "<colgroup>" + "".join(f'<col style="width:{w}">' for w in widths) + "</colgroup>"
+    header_cells = " ".join(
+        f'<th class="centered">{h}</th>' if (i + 1) in c_cols else f"<th>{h}</th>"
+        for i, h in enumerate(hdrs)
+    )
+    rows_html = ""
+    for r in block["rows"]:
+        cell_vals = r["cells"] if isinstance(r, dict) else r
+        is_z = bool(isinstance(r, dict) and r.get("z"))
+        tr_class = ' class="z-driver"' if is_z else ""
+        cells = []
+        for i, v in enumerate(cell_vals[:len(hdrs)]):
+            txt = "" if v is None else v
+            if (i + 1) in c_cols:
+                cells.append(f'<td class="centered">{txt}</td>')
+            else:
+                cells.append(f"<td>{txt}</td>")
+        rows_html += f"<tr{tr_class}>" + "".join(cells) + "</tr>"
+
+    return f"""
+    <div style="font-size: {font_size}pt;">
+        <table>
+            {col_html}
+            <thead>
+                <tr><th colspan="{len(hdrs)}" class="header">{block['title']}</th></tr>
+                <tr>{header_cells}</tr>
+            </thead>
+            <tbody>
+                {rows_html}
+            </tbody>
+        </table>
+    </div>
+    """
+
+
+def _generate_dry_pdf(wb, output_path, date):
+    """PRD §5.3 — Dry by Driver. One driver group per block. Bin column dropped
+    (every row is DRY by definition); QTY + QTY OH centered."""
     if not HTML: return
-    
-    # Spec says "one PDF for all three" (Dry, Freezer, WH Pickup).
-    # Each atomic unit:
-    # Dry: One driver group
-    # Freezer: One freezer group
-    # WH Pickup: One customer block
-    
-    all_blocks = []
-    
-    # 1. Dry by Driver
     dry_groups = _get_dry_groups(wb)
-    dry_headers = ["Internal bin", "Bin", "QTY", "Product Name", "Vendor", "Customer", "Driver", "QTY OH"]
-    for driver, rows in dry_groups.items():
-        all_blocks.append({"title": f"Dry: {driver} - {date}", "headers": dry_headers, "rows": rows})
-        
-    # 2. Freezer Page
+    headers = ["Internal bin", "QTY", "Product Name", "Vendor", "Customer", "Driver", "QTY OH"]
+    widths = ["11%", "6%", "33%", "18%", "18%", "10%", "4%"]
+    center = {2, 7}
+    blocks = [
+        {"title": f"Dry: {driver} - {date}", "headers": headers, "rows": rows,
+         "center_cols": center, "col_widths_pct": widths}
+        for driver, rows in dry_groups.items()
+    ]
+    render_keep_together_pdf(blocks, output_path, _block_template)
+
+
+def _generate_freezer_pdf(wb, output_path, date):
+    """PRD §5.4 — Freezer Page. Freezer one / Freezer two are the atomic units."""
+    if not HTML: return
     freezer_groups = _get_freezer_groups(wb)
-    freezer_headers = ["Internal Bin", "qty", "Total Qty", "product name", "Customer", "Qty on Hand"]
-    for group, rows in freezer_groups.items():
-        all_blocks.append({"title": f"Freezer: {group} - {date}", "headers": freezer_headers, "rows": rows})
-        
-    # 3. WH Pickup
+    headers = ["Internal Bin", "qty", "Total Qty", "product name", "Customer", "Qty on Hand"]
+    widths = ["13%", "7%", "9%", "44%", "20%", "7%"]
+    center = {2, 3, 6}
+    blocks = [
+        {"title": f"Freezer: {group} - {date}", "headers": headers, "rows": rows,
+         "center_cols": center, "col_widths_pct": widths}
+        for group, rows in freezer_groups.items()
+    ]
+    render_keep_together_pdf(blocks, output_path, _block_template)
+
+
+def _generate_wh_pickup_pdf(wb, output_path, date):
+    """PRD §5.5 — WH Pickup. One customer block per page."""
+    if not HTML: return
     wh_groups = _get_wh_pickup_groups(wb)
-    wh_headers = ["qty", "Product Name", "bin", "internal bin", "vendor", "Driver", "qty OH"]
-    for cust, rows in wh_groups.items():
-        all_blocks.append({"title": f"WH Pickup: {cust} - {date}", "headers": wh_headers, "rows": rows})
-        
-    def template(block, font_size):
-        rows_html = ""
-        for r in block["rows"]:
-            rows_html += "<tr>" + "".join(f"<td>{v if v is not None else ''}</td>" for v in r) + "</tr>"
-            
-        return f"""
-        <div style="font-size: {font_size}pt;">
-            <table>
-                <thead>
-                    <tr><th colspan="{len(block['headers'])}" class="header">{block['title']}</th></tr>
-                    <tr>{" ".join(f"<th>{h}</th>" for h in block['headers'])}</tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table>
-        </div>
-        """
-        
-    render_keep_together_pdf(all_blocks, output_path, template)
+    headers = ["qty", "Product Name", "bin", "internal bin", "vendor", "Driver", "qty OH"]
+    widths = ["6%", "36%", "10%", "12%", "18%", "12%", "6%"]
+    center = {1, 7}
+    blocks = [
+        {"title": f"WH Pickup: {cust} - {date}", "headers": headers, "rows": rows,
+         "center_cols": center, "col_widths_pct": widths}
+        for cust, rows in wh_groups.items()
+    ]
+    render_keep_together_pdf(blocks, output_path, _block_template)
 
 def _render_table(title, headers, rows):
     html = f"""
@@ -589,11 +647,12 @@ def _render_table(title, headers, rows):
     return html
 
 def _get_dry_groups(wb):
+    """Returns {driver: [{"cells": [...], "z": bool}, ...]} so the PDF
+    template can shade Z-driver rows distinctly."""
     ws = find_sheet(wb, K.SHEET_ALL_ORDERS)
     hmap = header_map(ws)
     bin_col = hmap.get("Bin")
     driver_col = hmap.get("Driver")
-    # Try multiple common variants of the internal bin header
     internal_bin_col = hmap.get("BIN(Internal)") or hmap.get("BIN (Internal)") or hmap.get("internal bin") or hmap.get("BIN")
     pname_idx = hmap.get("Product Name")
     desc_idx = hmap.get("Description")
@@ -601,32 +660,32 @@ def _get_dry_groups(wb):
     vendor_idx = hmap.get("Vendor")
     name_idx = hmap.get("Name")
     qoh_idx = hmap.get("Quantity On Hand")
-    
+
     groups = defaultdict(list)
-    driver_seq = _get_driver_sequence(wb)
-    
+
     for _, r in iter_data_rows(ws):
         bin_val = str(r[bin_col-1] or "") if bin_col and bin_col <= len(r) else ""
         if bin_val.upper() == "DRY":
             driver = str(r[driver_col-1] or "") if driver_col and driver_col <= len(r) else "Unknown"
-            
+
             pn_val = str(r[pname_idx-1] or "") if pname_idx and pname_idx <= len(r) else ""
             ds_val = str(r[desc_idx-1] or "") if desc_idx and desc_idx <= len(r) else ""
             pname = pn_val + " " + ds_val
-            
+
             ib_val = r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else ""
             qty_val = r[qty_idx-1] if qty_idx and qty_idx <= len(r) else ""
             vendor_val = r[vendor_idx-1] if vendor_idx and vendor_idx <= len(r) else ""
             name_val = r[name_idx-1] if name_idx and name_idx <= len(r) else ""
             qoh_val = r[qoh_idx-1] if qoh_idx and qoh_idx <= len(r) else ""
-            
-            groups[driver].append([
-                ib_val, bin_val, qty_val, pname,
-                vendor_val, name_val, driver, qoh_val
-            ])
-    
+
+            groups[driver].append({
+                # PRD §5.3 — Bin column dropped (always "DRY" inside this report).
+                "cells": [ib_val, qty_val, pname, vendor_val, name_val, driver, qoh_val],
+                "z": is_z_driver(driver),
+            })
+
     for d in groups:
-        groups[d].sort(key=lambda x: str(x[0] or ""))
+        groups[d].sort(key=lambda x: str(x["cells"][0] or ""))
     return groups
 
 def _get_freezer_groups(wb):
@@ -675,15 +734,19 @@ def _get_freezer_groups(wb):
             key = code_key(c_val)
             tqty = totals[key] if key not in seen else ""
             seen.add(key)
-            
-            formatted_rows.append([
-                r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else "",
-                r[qty_col-1] if qty_col and qty_col <= len(r) else "",
-                tqty,
-                r[pname_col-1] if pname_col and pname_col <= len(r) else "",
-                r[name_col-1] if name_col and name_col <= len(r) else "",
-                r[qoh_col-1] if qoh_col and qoh_col <= len(r) else ""
-            ])
+            d_val = str(r[driver_col-1]) if driver_col and driver_col <= len(r) else ""
+
+            formatted_rows.append({
+                "cells": [
+                    r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else "",
+                    r[qty_col-1] if qty_col and qty_col <= len(r) else "",
+                    tqty,
+                    r[pname_col-1] if pname_col and pname_col <= len(r) else "",
+                    r[name_col-1] if name_col and name_col <= len(r) else "",
+                    r[qoh_col-1] if qoh_col and qoh_col <= len(r) else "",
+                ],
+                "z": is_z_driver(d_val),
+            })
         final_groups[g] = formatted_rows
     return final_groups
 
@@ -730,14 +793,18 @@ def _get_wh_pickup_groups(wb):
             pn_val = str(r[pname_col-1] or "") if pname_col and pname_col <= len(r) else ""
             ds_val = str(r[desc_col-1] or "") if desc_col and desc_col <= len(r) else ""
             pname = pn_val + " " + ds_val
-            
-            final_groups[cust].append([
-                r[qty_col-1] if qty_col and qty_col <= len(r) else "",
-                pname,
-                r[bin_col-1] if bin_col and bin_col <= len(r) else "",
-                r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else "",
-                r[vendor_col-1] if vendor_col and vendor_col <= len(r) else "",
-                r[driver_col-1] if driver_col and driver_col <= len(r) else "",
-                r[qoh_col-1] if qoh_col and qoh_col <= len(r) else ""
-            ])
+            d_val = r[driver_col-1] if driver_col and driver_col <= len(r) else ""
+
+            final_groups[cust].append({
+                "cells": [
+                    r[qty_col-1] if qty_col and qty_col <= len(r) else "",
+                    pname,
+                    r[bin_col-1] if bin_col and bin_col <= len(r) else "",
+                    r[internal_bin_col-1] if internal_bin_col and internal_bin_col <= len(r) else "",
+                    r[vendor_col-1] if vendor_col and vendor_col <= len(r) else "",
+                    d_val,
+                    r[qoh_col-1] if qoh_col and qoh_col <= len(r) else "",
+                ],
+                "z": is_z_driver(d_val),
+            })
     return final_groups

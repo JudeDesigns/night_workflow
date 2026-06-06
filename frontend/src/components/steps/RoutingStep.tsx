@@ -337,27 +337,43 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
           <div className="flex-1 flex flex-col bg-white overflow-hidden relative">
             {previewData.warehouseShort.rows.length > 0 ? (
               <div className="flex-1 overflow-auto">
-                <table className="w-full border-collapse table-fixed text-[12px]">
+                <table className="border-collapse text-[12px]" style={{ minWidth: "1500px" }}>
+                  <colgroup>
+                    <col style={{ width: "32px" }} />
+                    <col style={{ width: "260px" }} />
+                    <col style={{ width: "84px" }} />
+                    <col style={{ width: "70px" }} />
+                    <col style={{ width: "140px" }} />
+                    <col style={{ width: "240px" }} />
+                    <col style={{ width: "60px" }} />
+                    <col style={{ width: "70px" }} />
+                    <col style={{ width: "160px" }} />
+                    <col style={{ width: "80px" }} />
+                    <col style={{ width: "90px" }} />
+                    <col style={{ width: "60px" }} />
+                    <col style={{ width: "180px" }} />
+                  </colgroup>
                   <thead className="sticky top-0 z-30">
-                    <tr className="h-6">
-                      <th className="w-10 border-r border-b border-border bg-[#f8d7da] text-[10px] text-destructive/60 font-medium p-0"></th>
-                      <th className="w-48 border-r border-b border-border bg-[#f8d7da] text-[10px] text-destructive/60 font-bold p-0 uppercase">A</th>
-                      <th className="w-28 border-r border-b border-border bg-[#f8d7da] text-[10px] text-destructive/60 font-bold p-0 uppercase">B</th>
-                      <th className="w-16 border-r border-b border-border bg-[#f8d7da] text-[10px] text-destructive/60 font-bold p-0 uppercase">C</th>
-                      <th className="w-48 border-b border-border bg-[#f8d7da] text-[10px] text-destructive/60 font-bold p-0 uppercase">D</th>
-                    </tr>
                     <tr className="bg-[#fff5f5] border-b border-destructive/20 shadow-sm">
                       <th className="border-r border-border p-1 bg-[#fff5f5]"></th>
-                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Deficient Product</th>
-                      <th className="border-r border-border text-right px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Shortage Qty</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Product Name / Code</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Bin</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Int. Bin</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Vendor</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Description</th>
+                      <th className="border-r border-border text-center px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Qty</th>
+                      <th className="border-r border-border text-center px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">QOH</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Customer</th>
+                      <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Driver</th>
+                      <th className="border-r border-border text-right px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Shortage</th>
                       <th className="border-r border-border text-center px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Unit</th>
                       <th className="text-left px-2 py-1.5 font-bold text-[10px] text-destructive uppercase tracking-tight">Emergency Re-Route</th>
                     </tr>
                   </thead>
                   <tbody>
                     {previewData.warehouseShort.rows.map((row, idx) => (
-                      <tr 
-                        key={row.id} 
+                      <tr
+                        key={row.id}
                         onClick={() => setSelectedRowId(row.id)}
                         className={`h-10 border-b border-border/40 hover:bg-destructive/[0.02] transition-colors cursor-default group ${
                           selectedRowId === row.id ? "bg-destructive/[0.04] ring-1 ring-inset ring-destructive/20" : ""
@@ -365,9 +381,17 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                       >
                         <td className="border-r border-border bg-[#fff5f5] text-center text-[10px] text-destructive/40 font-bold">{idx + 1}</td>
                         <td className="border-r border-border px-2 py-1 font-bold truncate" title={row.productName}>
-                          <div className="text-foreground">{row.productName}</div>
+                          <div className="text-foreground truncate">{row.productName}</div>
                           <div className="text-[9px] text-muted-foreground/60 font-mono uppercase tracking-tighter">{row.code}</div>
                         </td>
+                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.bin || "")}>{row.bin || <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 truncate font-mono text-[11px] text-foreground/70" title={String(row.internalBin || "")}>{row.internalBin || <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.vendor || "")}>{row.vendor || <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 truncate text-muted-foreground/70 text-[11px]" title={String(row.description || "")}>{row.description || <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 text-center tabular-nums text-foreground/80">{row.qty !== "" && row.qty !== undefined ? String(row.qty) : <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 text-center tabular-nums text-foreground/80">{row.qoh !== "" && row.qoh !== undefined ? String(row.qoh) : <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.customer || "")}>{row.customer || <span className="text-muted-foreground/40">—</span>}</td>
+                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.driver || "")}>{row.driver || <span className="text-muted-foreground/40">—</span>}</td>
                         <td className="border-r border-border px-2 py-1 text-right font-black text-destructive tabular-nums bg-destructive/[0.01]">
                           {row.shortage !== null && row.shortage !== undefined && row.shortage !== "" ? (
                             typeof row.shortage === "number" ? row.shortage.toLocaleString(undefined, { maximumFractionDigits: 4 }) : row.shortage
@@ -379,8 +403,8 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                           {row.unit || <span className="text-muted-foreground/40">—</span>}
                         </td>
                         <td className={`p-0 relative ${selectedRowId === row.id ? "bg-white shadow-inner" : ""}`}>
-                          <select 
-                            value={wsDecisions[row.id] || ""} 
+                          <select
+                            value={wsDecisions[row.id] || ""}
                             onChange={(e) => setWsDecisions(prev => ({
                               ...prev,
                               [row.id]: e.target.value

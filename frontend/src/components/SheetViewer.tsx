@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Loader2, X } from "lucide-react"
 
-type RowKind = "band" | "header" | "produce" | "data"
+type RowKind = "band" | "header" | "produce" | "z-driver" | "data"
 
 interface Row {
   kind: RowKind
@@ -11,6 +11,8 @@ interface Row {
 interface SheetData {
   name: string
   rows: Row[]
+  /** 1-based column indices that should render centered (Qty / Price / etc.) */
+  centerCols?: number[]
   truncated: boolean
 }
 
@@ -133,18 +135,21 @@ export default function SheetViewer({ jobId, filename, title, onClose }: Props) 
                   const isBand = row.kind === "band"
                   const isHeader = row.kind === "header"
                   const isProduce = row.kind === "produce"
+                  const isZDriver = row.kind === "z-driver"
+                  const centerSet = new Set(sheet.centerCols || [])
                   const rowCls = isBand
                     ? "bg-[#1F2937] text-white font-bold"
                     : isHeader
                     ? "bg-[#4472C4] text-white font-bold"
                     : isProduce
                     ? "bg-[#D3D3D3]"
+                    : isZDriver
+                    ? "bg-[#B5BFC9]"
                     : "hover:bg-muted/30"
-                  const cellCls = isBand
-                    ? "px-3 py-1.5 align-middle whitespace-nowrap overflow-hidden text-ellipsis text-left"
-                    : isHeader
-                    ? "border border-white/20 px-3 py-1 align-middle whitespace-nowrap overflow-hidden text-ellipsis text-center"
-                    : "border border-border/30 px-3 py-1 align-top whitespace-nowrap overflow-hidden text-ellipsis max-w-[320px]"
+                  // Band cells: centered per spec §10 (vendor/driver/customer + date).
+                  const bandCellCls = "px-3 py-1.5 align-middle whitespace-nowrap overflow-hidden text-ellipsis text-center"
+                  const headerCellBase = "border border-white/20 px-3 py-1 align-middle whitespace-nowrap overflow-hidden text-ellipsis text-center"
+                  const dataCellBase = "border border-border/30 px-3 py-1 align-top whitespace-nowrap overflow-hidden text-ellipsis max-w-[320px]"
                   // Band rows render as a single spanning cell so they read like the Excel merge.
                   if (isBand) {
                     const label = row.cells.find((v) => v !== "" && v != null) ?? ""
@@ -153,7 +158,7 @@ export default function SheetViewer({ jobId, filename, title, onClose }: Props) 
                         <td className="sticky left-0 z-10 w-12 bg-muted/60 border border-border/40 text-[10px] font-mono text-muted-foreground/70 text-center">
                           {r + 1}
                         </td>
-                        <td colSpan={colCount} className={cellCls} title={String(label)}>
+                        <td colSpan={colCount} className={bandCellCls} title={String(label)}>
                           {String(label)}
                         </td>
                       </tr>
@@ -164,11 +169,16 @@ export default function SheetViewer({ jobId, filename, title, onClose }: Props) 
                       <td className="sticky left-0 z-10 w-12 bg-muted/60 border border-border/40 text-[10px] font-mono text-muted-foreground/70 text-center">
                         {r + 1}
                       </td>
-                      {Array.from({ length: colCount }).map((_, c) => (
-                        <td key={c} className={cellCls} title={String(row.cells[c] ?? "")}>
-                          {String(row.cells[c] ?? "")}
-                        </td>
-                      ))}
+                      {Array.from({ length: colCount }).map((_, c) => {
+                        const isCentered = centerSet.has(c + 1)
+                        const base = isHeader ? headerCellBase : dataCellBase
+                        const align = isHeader ? "" : (isCentered ? " text-center" : " text-left")
+                        return (
+                          <td key={c} className={base + align} title={String(row.cells[c] ?? "")}>
+                            {String(row.cells[c] ?? "")}
+                          </td>
+                        )
+                      })}
                     </tr>
                   )
                 })}

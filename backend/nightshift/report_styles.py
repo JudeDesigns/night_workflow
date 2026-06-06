@@ -6,6 +6,8 @@ headers, bordered data rows.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -17,13 +19,17 @@ COLOR_GROUP_BAND_FG = "FFFFFF"
 COLOR_COL_HEADER_BG = "4472C4"   # office blue
 COLOR_COL_HEADER_FG = "FFFFFF"
 COLOR_BORDER = "BFBFBF"
+# Cool blue-grey used to flag rows whose Driver = "Z" (future deliveries /
+# pickups). Distinct from the produce light-grey (D3D3D3) used on Jetro pages.
+COLOR_Z_DRIVER_BG = "B5BFC9"
 
 _thin = Side(style="thin", color=COLOR_BORDER)
 _DATA_BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 
 _GROUP_BAND_FILL = PatternFill("solid", fgColor=COLOR_GROUP_BAND_BG)
 _GROUP_BAND_FONT = Font(bold=True, color=COLOR_GROUP_BAND_FG, size=12)
-_GROUP_BAND_ALIGN = Alignment(horizontal="left", vertical="center", indent=1)
+# Spec §10: spanned headers (vendor/driver/customer + date) are horizontally centered.
+_GROUP_BAND_ALIGN = Alignment(horizontal="center", vertical="center")
 
 _COL_HEADER_FILL = PatternFill("solid", fgColor=COLOR_COL_HEADER_BG)
 _COL_HEADER_FONT = Font(bold=True, color=COLOR_COL_HEADER_FG)
@@ -82,3 +88,20 @@ def set_column_widths(ws: Worksheet, widths: list[int]) -> None:
     for i, w in enumerate(widths, start=1):
         if w:
             ws.column_dimensions[get_column_letter(i)].width = w
+
+
+_Z_DRIVER_FILL = PatternFill("solid", fgColor=COLOR_Z_DRIVER_BG)
+
+
+def apply_z_driver_shading(ws: Worksheet, row: int, n_cols: int) -> None:
+    """Overlay the Z-driver grey fill on a data row that's already been
+    `style_data_row`-styled. Cell borders and alignment are preserved."""
+    for c in range(1, n_cols + 1):
+        ws.cell(row=row, column=c).fill = _Z_DRIVER_FILL
+
+
+def is_z_driver(value: Any) -> bool:
+    """True if the cell value looks like the Z driver placeholder."""
+    if value is None:
+        return False
+    return str(value).strip().upper() == "Z"

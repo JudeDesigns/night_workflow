@@ -14,7 +14,18 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
   const baseUrl = `/api/files/${jobId}`
   const [viewing, setViewing] = useState<{ filename: string; title: string } | null>(null)
 
-  const reports = [
+  // PDFs is a list so the Pick Sheets card can surface 3 separate downloads
+  // (Dry / Freezer / WH Pickup) while every other card has at most one PDF.
+  type Report = {
+    title: string
+    description: string
+    xlsx: string | null | undefined
+    pdf?: string | null
+    pdfs?: { label: string; file: string | null | undefined }[]
+    color: string
+  }
+
+  const reports: Report[] = [
     {
       title: "PO Report",
       description: "Vendor purchase orders",
@@ -26,7 +37,11 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
       title: "Warehouse Pick Sheets",
       description: "Dry, Freezer, & WH Pickup",
       xlsx: outputs?.dryFreezerWh?.xlsx,
-      pdf: outputs?.dryFreezerWh?.pdf,
+      pdfs: [
+        { label: "Dry",      file: outputs?.dryFreezerWh?.dryPdf },
+        { label: "Freezer",  file: outputs?.dryFreezerWh?.freezerPdf },
+        { label: "WH Pickup", file: outputs?.dryFreezerWh?.whPickupPdf },
+      ],
       color: "bg-green-500",
     },
     {
@@ -42,7 +57,7 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
       xlsx: null,
       pdf: outputs?.jetroPdf?.pdf,
       color: "bg-orange-600",
-    }
+    },
   ]
 
   return (
@@ -106,6 +121,19 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
                   PDF
                 </Button>
               )}
+              {report.pdfs?.filter(p => p.file).map(p => (
+                <Button
+                  key={p.label}
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 min-w-[88px] gap-2 h-11 font-bold rounded-xl border-border/60 hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition-all"
+                  onClick={() => window.open(`${baseUrl}/${p.file}`, "_blank")}
+                  title={`Download the ${p.label} PDF`}
+                >
+                  <FileText className="w-4 h-4 text-red-600" />
+                  {p.label}
+                </Button>
+              ))}
             </CardContent>
           </Card>
         ))}

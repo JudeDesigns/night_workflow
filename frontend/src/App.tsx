@@ -27,6 +27,14 @@ export type RowData = {
   updateVendor?: string
   shortage?: number
   unit?: string
+  // Warehouse-short context columns (only populated on shortage rows)
+  description?: string
+  qty?: number | string
+  customer?: string
+  transactionDate?: string
+  driver?: string
+  qoh?: number | string
+  internalBin?: string
 }
 
 export type PreviewData = {

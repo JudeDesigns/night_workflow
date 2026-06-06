@@ -74,24 +74,24 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
         ao_row_count = 0
         ao_rows = []
 
-    # Jetro Source
+    # Jetro Source — display the numeric Bin (column F) per PRD §6.4, not the
+    # warehouse internal bin. Jetro rows are defined by a numeric Bin so this
+    # is the more useful identifier in the routing UI.
     try:
         js = find_sheet(wb, K.SHEET_JETRO_SOURCE)
-        known_js = ["Product Name", "Code", "Bin", "Vendor", "Sheet", "BIN(Internal)", "BIN (Internal)", "internal bin", "BIN"]
+        known_js = ["Product Name", "Code", "Bin", "Vendor", "Sheet"]
         js_hmap = header_map(js, known_headers=known_js)
         js_row_count = max(js.max_row - 1, 0)
         js_rows = []
         for row_idx, values in iter_data_rows(js, known_headers=known_js):
-            # Try to get internal bin for preview
-            ib_idx = js_hmap.get("BIN(Internal)") or js_hmap.get("BIN (Internal)") or js_hmap.get("internal bin") or js_hmap.get("BIN")
-            ib_val = str(values[ib_idx-1]) if ib_idx and ib_idx <= len(values) else ""
-            
+            bin_val = str(values[js_hmap["Bin"] - 1]) if "Bin" in js_hmap else ""
+
             js_rows.append({
                 "id": f"{K.SHEET_JETRO_SOURCE}:{row_idx}",
                 "values": values,
                 "productName": values[js_hmap["Product Name"] - 1] if "Product Name" in js_hmap else "",
                 "code": values[js_hmap["Code"] - 1] if "Code" in js_hmap else "",
-                "bin": ib_val or (values[js_hmap["Bin"] - 1] if "Bin" in js_hmap else ""),
+                "bin": bin_val,
                 "vendor": values[js_hmap["Vendor"] - 1] if "Vendor" in js_hmap else "",
                 "sheet": values[0],
                 "vendorRoute": values[1],
@@ -134,15 +134,33 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
         wh_hmap = header_map(ws_short, known_headers=known_wh)
         shortages: list[dict[str, Any]] = []
         wh_rows = []
-        
+
         pname_col = None
         for hdr, idx in wh_hmap.items():
             if hdr and "product name" in str(hdr).lower():
                 pname_col = idx
                 break
-        
+
         code_idx = wh_hmap.get("Code")
         unit_idx = wh_hmap.get("UNIT")
+        bin_idx = wh_hmap.get("Bin")
+        desc_idx = wh_hmap.get("Description")
+        vendor_idx = wh_hmap.get("Vendor")
+        qty_idx = wh_hmap.get("Qty")
+        cust_idx = wh_hmap.get("Name")
+        txn_idx = wh_hmap.get("Transaction Date")
+        driver_idx = wh_hmap.get("Driver")
+        qoh_idx = wh_hmap.get("Quantity On Hand")
+        internal_bin_idx = (
+            wh_hmap.get("BIN(Internal)") or wh_hmap.get("BIN (Internal)")
+            or wh_hmap.get("internal bin") or wh_hmap.get("BIN")
+        )
+
+        def _val(values: tuple, idx: int | None) -> Any:
+            if not idx or idx - 1 >= len(values):
+                return ""
+            v = values[idx - 1]
+            return "" if v is None else v
 
         for row_idx, values in iter_data_rows(ws_short, known_headers=known_wh):
             shortage_val = values[0]
@@ -153,7 +171,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
                     "unit": str(values[unit_idx-1]) if unit_idx else "CASE",
                     "shortage": float(shortage_val) if shortage_val else 0,
                 })
-            
+
             wh_rows.append({
                 "id": f"{K.SHEET_WAREHOUSE_SHORT}:{row_idx}",
                 "values": values,
@@ -162,6 +180,15 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
                 "updateVendor": values[2],
                 "productName": str(values[pname_col - 1]) if pname_col else "",
                 "code": str(values[code_idx-1]) if code_idx else "",
+                "bin": _val(values, bin_idx),
+                "description": _val(values, desc_idx),
+                "vendor": _val(values, vendor_idx),
+                "qty": _val(values, qty_idx),
+                "customer": _val(values, cust_idx),
+                "transactionDate": str(_val(values, txn_idx) or ""),
+                "driver": str(_val(values, driver_idx) or "").strip(),
+                "qoh": _val(values, qoh_idx),
+                "internalBin": _val(values, internal_bin_idx),
             })
     except KeyError:
         wh_row_count = 0
@@ -298,9 +325,16 @@ async def get_status(job_id: str):
 
 
 # Output filenames are stable per job (Part 3 / Part 4 write to these paths).
+# The Dry / Freezer / WH Pickup PDFs are emitted as separate files so each can
+# be printed and handed out independently (operational request).
 _OUTPUT_MAP: dict[str, dict[str, str]] = {
     "poReport":      {"xlsx": "po_report.xlsx", "pdf": "po_report.pdf"},
-    "dryFreezerWh":  {"xlsx": "pick_sheets.xlsx", "pdf": "pick_sheets.pdf"},
+    "dryFreezerWh":  {
+        "xlsx":        "pick_sheets.xlsx",
+        "dryPdf":      "dry.pdf",
+        "freezerPdf":  "freezer.pdf",
+        "whPickupPdf": "wh_pickup.pdf",
+    },
     "jetroWorkbook": {"xlsx": "jetro.xlsx"},
     "jetroPdf":      {"pdf": "jetro_report.pdf"},
 }
@@ -368,6 +402,7 @@ async def download_file(job_id: str, filename: str):
 _THEME_BAND_SUFFIX = "1F2937"
 _THEME_HEADER_SUFFIX = "4472C4"
 _THEME_PRODUCE_SUFFIX = "D3D3D3"
+_THEME_Z_DRIVER_SUFFIX = "B5BFC9"
 
 
 def _row_kind(ws, row_idx: int) -> str:
@@ -385,6 +420,8 @@ def _row_kind(ws, row_idx: int) -> str:
         return "header"
     if s.endswith(_THEME_PRODUCE_SUFFIX):
         return "produce"
+    if s.endswith(_THEME_Z_DRIVER_SUFFIX):
+        return "z-driver"
     return "data"
 
 
@@ -412,6 +449,25 @@ async def preview_workbook(job_id: str, filename: str):
         max_row = min(ws.max_row, MAX_ROWS)
         if ws.max_row > MAX_ROWS:
             truncated = True
+
+        # Detect centered columns from the first non-band, non-header data-style
+        # row (regular data, produce, or z-driver) so the SheetViewer renders
+        # Qty/Price/etc. centered like the xlsx.
+        center_cols: list[int] = []
+        data_kinds = {"data", "produce", "z-driver"}
+        for r_idx in range(1, max_row + 1):
+            if _row_kind(ws, r_idx) not in data_kinds:
+                continue
+            cols_centered: list[int] = []
+            for c_idx in range(1, ws.max_column + 1):
+                cell = ws.cell(row=r_idx, column=c_idx)
+                horiz = getattr(getattr(cell, "alignment", None), "horizontal", None)
+                if horiz == "center":
+                    cols_centered.append(c_idx)
+            if cols_centered:
+                center_cols = cols_centered
+                break
+
         for r_idx in range(1, max_row + 1):
             cells = ["" if c.value is None else c.value
                      for c in ws[r_idx]]
@@ -419,6 +475,7 @@ async def preview_workbook(job_id: str, filename: str):
         sheets.append({
             "name": ws.title,
             "rows": rows,
+            "centerCols": center_cols,
             "truncated": truncated,
         })
     wb.close()

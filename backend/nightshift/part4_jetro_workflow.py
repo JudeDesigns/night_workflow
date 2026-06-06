@@ -19,6 +19,8 @@ from .sheet_utils import (
 
 from .pdf_utils import render_keep_together_pdf
 from .report_styles import (
+    apply_z_driver_shading,
+    is_z_driver,
     set_column_widths,
     style_column_header_row,
     style_data_row,
@@ -126,11 +128,13 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
     prod_idx = hmap.get("Product")
     new_bin_idx = hmap.get("New bin")
     qoh_idx = hmap.get("Quantity On Hand")
+    driver_idx = hmap.get("Driver")
         
-    headers = ["Internal bin", "New bin", "Qty", "Product", "QTY OH"]
+    # PRD §6.4: col A is the numeric Jetro Bin (source column F).
+    headers = ["Bin", "New bin", "Qty", "Product", "QTY OH"]
     n_cols = len(headers)
-    center_cols = {3, 5}
-    set_column_widths(ws_jetro, [14, 12, 8, 60, 10])
+    center_cols = {1, 2, 3, 5}
+    set_column_widths(ws_jetro, [10, 12, 8, 60, 10])
     current_row = 1
 
     for block in blocks:
@@ -149,10 +153,9 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
         current_row += 1
 
         for r in rows:
-            # Col A shows Internal bin (per the office's update). The New bin
-            # blanking rule, however, follows PRD §6.4: blank New bin when it
-            # equals the numeric Jetro Bin (column F).
-            ib_val = r[internal_bin_idx-1] if internal_bin_idx and internal_bin_idx <= len(r) else ""
+            # PRD §6.4: Jetro Page col A = source column F ("Bin") — the
+            # numeric Jetro bin (e.g. "6C", "12"), not the internal warehouse
+            # bin (e.g. "FREEZER-A11"). New bin is blanked when it matches Bin.
             bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""
             new_bin_val = r[new_bin_idx-1] if new_bin_idx and new_bin_idx <= len(r) else ""
             if str(new_bin_val).strip().upper() == str(bin_val).strip().upper():
@@ -166,7 +169,7 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
             p_merge = f"{pname}/{desc}/{prod}/{code}".replace("//", "/").replace("//", "/")
 
             row_data = [
-                ib_val,
+                bin_val,
                 new_bin_val,
                 r[qty_idx-1] if qty_idx and qty_idx <= len(r) else "",
                 p_merge,
@@ -176,22 +179,27 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
                 ws_jetro.cell(row=current_row, column=i, value=v)
             style_data_row(ws_jetro, current_row, n_cols, center_cols=center_cols)
 
-            # Produce shading overlays the base data styling.
+            # Produce shading overlays the base data styling (PRD §6.4).
             is_produce = str(r[cat_idx-1]).lower() == "produce" if cat_idx and cat_idx <= len(r) else False
+            driver_val = r[driver_idx-1] if driver_idx and driver_idx <= len(r) else ""
             if is_produce:
                 fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
                 for i in range(1, n_cols + 1):
                     ws_jetro.cell(row=current_row, column=i).fill = fill
+            elif is_z_driver(driver_val):
+                # Z driver = future delivery / pickup. Distinct cool-grey shade.
+                apply_z_driver_shading(ws_jetro, current_row, n_cols)
 
             current_row += 1
         current_row += 1
 
     # --- Jetro Produce Sheet (Spec §6.7) ---
+    # Per PRD §6.7: col A is "Bin" (source column F), the numeric Jetro bin.
     ws_prod = out_wb.create_sheet("Jetro Produce Sheet")
-    prod_headers = ["Internal bin", "New bin", "Qty", "Total qty", "Product Info", "Sell price", "Cost price", "JTR U COST", "JTR C cost", "Customer name", "Driver name"]
+    prod_headers = ["Bin", "New bin", "Qty", "Total qty", "Product Info", "Sell price", "Cost price", "JTR U COST", "JTR C cost", "Customer name", "Driver name"]
     prod_n_cols = len(prod_headers)
-    prod_numeric_cols = {3, 4, 6, 7, 8, 9}
-    set_column_widths(ws_prod, [12, 10, 8, 10, 50, 12, 12, 12, 12, 28, 16])
+    prod_center_cols = {1, 2, 3, 4, 6, 7, 8, 9}
+    set_column_widths(ws_prod, [10, 10, 8, 10, 50, 12, 12, 12, 12, 28, 16])
 
     # Filter produce rows
     produce_rows = []
@@ -199,9 +207,9 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
         if cat_idx and cat_idx <= len(values) and str(values[cat_idx-1]).lower() == "produce":
             produce_rows.append(values)
 
-    # Sort by Internal Bin, then Product Name
-    ib_idx = (internal_bin_idx - 1) if internal_bin_idx else -1
-    produce_rows.sort(key=lambda x: (str(x[ib_idx] or "") if ib_idx >= 0 and ib_idx < len(x) else "",
+    # Sort by Bin (col F), then Product Name (PRD §6.7).
+    _b_sort = (bin_idx - 1) if bin_idx else -1
+    produce_rows.sort(key=lambda x: (str(x[_b_sort] or "") if _b_sort >= 0 and _b_sort < len(x) else "",
                                      str(x[pname_idx-1] or "").lower() if pname_idx and pname_idx <= len(x) else ""))
 
     # Write headers
@@ -223,17 +231,16 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
             tqty = totals[pname]
             seen_pnames.add(pname)
             
-        ib_val = r[internal_bin_idx-1] if internal_bin_idx and internal_bin_idx <= len(r) else ""
         bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""
         new_bin_val = r[new_bin_idx-1] if new_bin_idx and new_bin_idx <= len(r) else ""
         # PRD §6.7: blank New bin when it equals the Jetro Bin (column F).
         if str(new_bin_val).strip().upper() == str(bin_val).strip().upper(): new_bin_val = ""
-        
+
         # Product Info: ProductName/Product/Code
         p_info = f"{r[pname_idx-1] if pname_idx and pname_idx <= len(r) else ''}/{r[prod_idx-1] if prod_idx and prod_idx <= len(r) else ''}/{r[code_idx-1] if code_idx and code_idx <= len(r) else ''}".replace("//", "/")
-        
+
         row_data = [
-            ib_val,
+            bin_val,
             new_bin_val,
             r[qty_idx-1] if qty_idx and qty_idx <= len(r) else "",
             tqty,
@@ -249,7 +256,10 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
         for ci, v in enumerate(row_data, start=1):
             cell = ws_prod.cell(row=i, column=ci, value=v)
             if ci in (6, 7, 8, 9): cell.number_format = K.NUMBER_FORMAT_PRECISION
-        style_data_row(ws_prod, i, prod_n_cols, numeric_cols=prod_numeric_cols)
+        style_data_row(ws_prod, i, prod_n_cols, center_cols=prod_center_cols)
+        # Driver column is the last element of row_data; flag Z-driver rows.
+        if is_z_driver(row_data[-1]):
+            apply_z_driver_shading(ws_prod, i, prod_n_cols)
 
     # --- Menu Page (Spec §6.6) ---
     # page_map holds (start_page, end_page) per block. Orders that span more
