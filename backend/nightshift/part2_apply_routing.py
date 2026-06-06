@@ -30,6 +30,86 @@ def _parse_decision_id(raw_id: Any) -> tuple[str, int] | None:
         return None
 
 
+# Frontend field name -> ordered list of header names to try in the target sheet.
+# The first header that exists in the sheet's header_map wins. This lets the
+# same field map to slightly different column titles across sheets (e.g. the
+# internal bin is "BIN(Internal)" on All Orders / PO but doesn't exist on
+# Jetro Source — there "bin" should fall through to the numeric "Bin").
+_FIELD_HEADERS: dict[str, list[str]] = {
+    "productName":  ["Product Name"],
+    "code":         ["Code"],
+    "bin":          ["BIN(Internal)", "BIN (Internal)", "internal bin", "Bin"],
+    "internalBin":  ["BIN(Internal)", "BIN (Internal)", "internal bin", "BIN"],
+    "vendor":       ["Vendor"],
+    "description":  ["Description"],
+    "qty":          ["Qty"],
+    "qoh":          ["Quantity On Hand"],
+    "customer":     ["Name"],
+    "driver":       ["Driver"],
+    "shortage":     ["Shortages"],
+    "unit":         ["UNIT"],
+}
+
+# Jetro Source displays the numeric Bin (col F), so an edit to "bin" there
+# should land on the numeric column instead of the internal-bin alias chain.
+_FIELD_HEADERS_BY_SHEET: dict[str, dict[str, list[str]]] = {
+    K.SHEET_JETRO_SOURCE: {"bin": ["Bin"]},
+}
+
+# Numeric fields — convert input strings to float before writing so downstream
+# sum/sort logic still works.
+_NUMERIC_FIELDS = {"qty", "qoh", "shortage"}
+
+
+def _coerce(field: str, value: Any) -> Any:
+    """Cast incoming JSON value to the type the workbook expects."""
+    # Treat blank / whitespace-only input as "cleared".
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None if field in _NUMERIC_FIELDS else ""
+    if field in _NUMERIC_FIELDS:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def apply_cell_edits(wb: Workbook, cell_edits: list[dict[str, Any]]) -> None:
+    """Write user edits from the Routing UI back to the workbook.
+
+    Each edit is `{id: "<sheet>:<row>", field: "<fieldName>", value: <any>}`.
+    Edits run **before** any routing logic so the rest of Part 2 (sheet moves,
+    WS re-routing, PO totals) operates on the corrected data.
+    """
+    for edit in cell_edits:
+        parsed = _parse_decision_id(edit.get("id"))
+        if not parsed:
+            continue
+        sheet_name, row_idx = parsed
+        field = edit.get("field")
+        if not field or field not in _FIELD_HEADERS:
+            continue
+
+        try:
+            ws = find_sheet(wb, sheet_name)
+        except KeyError:
+            continue
+
+        hmap = header_map(ws)
+        # Sheet-specific override first, then the general fallback chain.
+        candidates = (
+            _FIELD_HEADERS_BY_SHEET.get(ws.title, {}).get(field)
+            or _FIELD_HEADERS[field]
+        )
+        col_idx = next((hmap[h] for h in candidates if h in hmap), None)
+        if not col_idx:
+            continue
+
+        # openpyxl's ws.cell(value=None) is a no-op, so assign via .value
+        # directly to support clearing a cell.
+        ws.cell(row=row_idx, column=col_idx).value = _coerce(field, edit.get("value"))
+
+
 def apply_sheet_dropdowns(wb: Workbook, routing_decisions: list[dict[str, Any]]) -> None:
     """Apply the Sheet and Vendor dropdown routing for All Orders, Jetro, PO."""
     for decision in routing_decisions:
@@ -237,12 +317,16 @@ def apply_driver_sequence(wb: Workbook, driver_sequence: list[str]) -> None:
 
 
 def apply_routing(
-    wb: Workbook, 
-    sheet_decisions: list[dict[str, Any]], 
-    ws_decisions: list[dict[str, Any]], 
-    driver_sequence: list[str]
+    wb: Workbook,
+    sheet_decisions: list[dict[str, Any]],
+    ws_decisions: list[dict[str, Any]],
+    driver_sequence: list[str],
+    cell_edits: list[dict[str, Any]] | None = None,
 ) -> None:
     """Run the entire Part 2 pipeline."""
+    # Cell edits run first so subsequent routing reads the corrected values.
+    if cell_edits:
+        apply_cell_edits(wb, cell_edits)
     if driver_sequence:
         apply_driver_sequence(wb, driver_sequence)
     apply_sheet_dropdowns(wb, sheet_decisions)

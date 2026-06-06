@@ -501,8 +501,9 @@ async def run_part2(payload: dict[str, Any]):
         sheet_routing = payload.get("sheetRoutingDecisions", [])
         ws_routing = payload.get("warehouseShortDecisions", [])
         driver_seq = payload.get("driverPullSequence", [])
-        
-        apply_routing(wb, sheet_routing, ws_routing, driver_seq)
+        cell_edits = payload.get("cellEdits", [])
+
+        apply_routing(wb, sheet_routing, ws_routing, driver_seq, cell_edits)
         
         out_path = job_dir / "part2.xlsx"
         wb.save(str(out_path))

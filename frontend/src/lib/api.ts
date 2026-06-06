@@ -36,16 +36,18 @@ export async function restoreJob(jobId: string) {
 }
 
 export async function applyRouting(
-  jobId: string, 
-  sheetRoutingDecisions: any[], 
-  warehouseShortDecisions: any[], 
-  driverPullSequence: string[]
+  jobId: string,
+  sheetRoutingDecisions: any[],
+  warehouseShortDecisions: any[],
+  driverPullSequence: string[],
+  cellEdits: { id: string; field: string; value: any }[] = []
 ) {
   const response = await api.post<{ jobId: string; status: string; outputs: any }>(`/part2`, {
     jobId,
     sheetRoutingDecisions,
     warehouseShortDecisions,
     driverPullSequence,
+    cellEdits,
   })
   return response.data
 }

@@ -60,6 +60,26 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
   const [filter, setFilter] = useState("")
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
 
+  // Per-cell edits. Keyed by row.id, then by field name. A field is only
+  // present in the map if the user actually typed into it, so the original
+  // row value is the fallback in `getVal`.
+  const [cellEdits, setCellEdits] = useState<Record<string, Record<string, any>>>({})
+
+  const getVal = (row: any, field: string): any => {
+    const edited = cellEdits[row.id]
+    if (edited && Object.prototype.hasOwnProperty.call(edited, field)) {
+      return edited[field]
+    }
+    return row[field]
+  }
+
+  const setVal = (rowId: string, field: string, value: any) => {
+    setCellEdits(prev => ({
+      ...prev,
+      [rowId]: { ...(prev[rowId] || {}), [field]: value },
+    }))
+  }
+
   const activeRows = useMemo(() => {
     switch(activeTab) {
       case "all_orders": return previewData.allOrders.rows
@@ -107,8 +127,12 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
         id,
         updateVendor
       }))
+      // Flatten the nested edits map into [{id, field, value}, ...] for the API.
+      const cellEditsPayload = Object.entries(cellEdits).flatMap(([id, fields]) =>
+        Object.entries(fields).map(([field, value]) => ({ id, field, value }))
+      )
 
-      await applyRouting(jobId, sheetRoutingPayload, wsRoutingPayload, drivers)
+      await applyRouting(jobId, sheetRoutingPayload, wsRoutingPayload, drivers, cellEditsPayload)
       onNext()
     } catch (err) {
       console.error("Failed to apply routing", err)
@@ -280,9 +304,34 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                       }`}
                     >
                       <td className="border-r border-border bg-[#f8f9fa] text-center text-[10px] text-muted-foreground/60 font-medium">{idx + 1}</td>
-                      <td className="border-r border-border px-2 py-1 font-medium truncate group-hover:text-primary" title={row.productName}>{row.productName}</td>
-                      <td className="border-r border-border px-2 py-1 font-mono text-[11px] text-muted-foreground/80">{row.code}</td>
-                      <td className="border-r border-border px-2 py-1 italic text-muted-foreground/60">{row.bin}</td>
+                      <td className="border-r border-border p-0">
+                        <input
+                          type="text"
+                          value={getVal(row, "productName") ?? ""}
+                          onChange={(e) => setVal(row.id, "productName", e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          title={String(getVal(row, "productName") ?? "")}
+                          className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-primary rounded-none px-2 py-1 text-[12px] font-medium outline-none"
+                        />
+                      </td>
+                      <td className="border-r border-border p-0">
+                        <input
+                          type="text"
+                          value={getVal(row, "code") ?? ""}
+                          onChange={(e) => setVal(row.id, "code", e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-primary rounded-none px-2 py-1 font-mono text-[11px] text-muted-foreground/80 outline-none"
+                        />
+                      </td>
+                      <td className="border-r border-border p-0">
+                        <input
+                          type="text"
+                          value={getVal(row, "bin") ?? ""}
+                          onChange={(e) => setVal(row.id, "bin", e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-primary rounded-none px-2 py-1 italic text-muted-foreground/80 outline-none"
+                        />
+                      </td>
                       <td className={`border-r border-border p-0 relative ${selectedRowId === row.id ? "bg-white shadow-inner" : ""}`}>
                         <select 
                           value={sheetDecisions[row.id]?.sheet || "All Orders"} 
@@ -380,27 +429,115 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                         }`}
                       >
                         <td className="border-r border-border bg-[#fff5f5] text-center text-[10px] text-destructive/40 font-bold">{idx + 1}</td>
-                        <td className="border-r border-border px-2 py-1 font-bold truncate" title={row.productName}>
-                          <div className="text-foreground truncate">{row.productName}</div>
-                          <div className="text-[9px] text-muted-foreground/60 font-mono uppercase tracking-tighter">{row.code}</div>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "productName") ?? ""}
+                            onChange={(e) => setVal(row.id, "productName", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            title={String(getVal(row, "productName") ?? "")}
+                            className="w-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 pt-1 text-[12px] font-bold text-foreground outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={getVal(row, "code") ?? ""}
+                            onChange={(e) => setVal(row.id, "code", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 pb-1 text-[9px] text-muted-foreground/60 font-mono uppercase tracking-tighter outline-none"
+                          />
                         </td>
-                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.bin || "")}>{row.bin || <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 truncate font-mono text-[11px] text-foreground/70" title={String(row.internalBin || "")}>{row.internalBin || <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.vendor || "")}>{row.vendor || <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 truncate text-muted-foreground/70 text-[11px]" title={String(row.description || "")}>{row.description || <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 text-center tabular-nums text-foreground/80">{row.qty !== "" && row.qty !== undefined ? String(row.qty) : <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 text-center tabular-nums text-foreground/80">{row.qoh !== "" && row.qoh !== undefined ? String(row.qoh) : <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.customer || "")}>{row.customer || <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.driver || "")}>{row.driver || <span className="text-muted-foreground/40">—</span>}</td>
-                        <td className="border-r border-border px-2 py-1 text-right font-black text-destructive tabular-nums bg-destructive/[0.01]">
-                          {row.shortage !== undefined && row.shortage !== null ? (
-                            row.shortage.toLocaleString(undefined, { maximumFractionDigits: 4 })
-                          ) : (
-                            <span className="text-muted-foreground/40 font-medium">—</span>
-                          )}
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "bin") ?? ""}
+                            onChange={(e) => setVal(row.id, "bin", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-[12px] text-foreground/80 outline-none"
+                          />
                         </td>
-                        <td className="border-r border-border px-2 py-1 text-center font-bold text-[11px] text-destructive/80 uppercase tracking-wider bg-destructive/[0.01]">
-                          {row.unit || <span className="text-muted-foreground/40">—</span>}
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "internalBin") ?? ""}
+                            onChange={(e) => setVal(row.id, "internalBin", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 font-mono text-[11px] text-foreground/70 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "vendor") ?? ""}
+                            onChange={(e) => setVal(row.id, "vendor", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-[12px] text-foreground/80 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "description") ?? ""}
+                            onChange={(e) => setVal(row.id, "description", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-[11px] text-muted-foreground/70 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={getVal(row, "qty") ?? ""}
+                            onChange={(e) => setVal(row.id, "qty", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-center tabular-nums text-[12px] text-foreground/80 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={getVal(row, "qoh") ?? ""}
+                            onChange={(e) => setVal(row.id, "qoh", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-center tabular-nums text-[12px] text-foreground/80 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "customer") ?? ""}
+                            onChange={(e) => setVal(row.id, "customer", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-[12px] text-foreground/80 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0">
+                          <input
+                            type="text"
+                            value={getVal(row, "driver") ?? ""}
+                            onChange={(e) => setVal(row.id, "driver", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-[12px] text-foreground/80 outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0 bg-destructive/[0.01]">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={getVal(row, "shortage") ?? ""}
+                            onChange={(e) => setVal(row.id, "shortage", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-right font-black text-destructive tabular-nums text-[12px] outline-none"
+                          />
+                        </td>
+                        <td className="border-r border-border p-0 bg-destructive/[0.01]">
+                          <input
+                            type="text"
+                            value={getVal(row, "unit") ?? ""}
+                            onChange={(e) => setVal(row.id, "unit", e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-destructive rounded-none px-2 py-1 text-center font-bold text-[11px] text-destructive/80 uppercase tracking-wider outline-none"
+                          />
                         </td>
                         <td className={`p-0 relative ${selectedRowId === row.id ? "bg-white shadow-inner" : ""}`}>
                           <select
