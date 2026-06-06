@@ -393,8 +393,8 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                         <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.customer || "")}>{row.customer || <span className="text-muted-foreground/40">—</span>}</td>
                         <td className="border-r border-border px-2 py-1 truncate text-foreground/80" title={String(row.driver || "")}>{row.driver || <span className="text-muted-foreground/40">—</span>}</td>
                         <td className="border-r border-border px-2 py-1 text-right font-black text-destructive tabular-nums bg-destructive/[0.01]">
-                          {row.shortage !== null && row.shortage !== undefined && row.shortage !== "" ? (
-                            typeof row.shortage === "number" ? row.shortage.toLocaleString(undefined, { maximumFractionDigits: 4 }) : row.shortage
+                          {row.shortage !== undefined && row.shortage !== null ? (
+                            row.shortage.toLocaleString(undefined, { maximumFractionDigits: 4 })
                           ) : (
                             <span className="text-muted-foreground/40 font-medium">—</span>
                           )}

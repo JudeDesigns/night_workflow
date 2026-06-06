@@ -94,7 +94,7 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
                     variant="outline"
                     size="sm"
                     className="flex-1 min-w-[88px] gap-2 h-11 font-bold rounded-xl border-border/60 hover:bg-primary/5 hover:text-primary hover:border-primary/20 transition-all"
-                    onClick={() => setViewing({ filename: report.xlsx, title: report.title })}
+                    onClick={() => setViewing({ filename: report.xlsx!, title: report.title })}
                   >
                     <Eye className="w-4 h-4 text-primary" />
                     View
