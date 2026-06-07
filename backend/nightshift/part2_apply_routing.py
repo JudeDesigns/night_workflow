@@ -8,7 +8,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from . import constants as K
 from .codes import code_key
-from .sheet_utils import find_sheet, header_index, header_map
+from .sheet_utils import find_sheet, header_index, header_map, int_if_whole
 
 
 def _copy_row_to(ws_dst: Worksheet, values: list[Any]) -> int:
@@ -287,7 +287,7 @@ def recalculate_po_totals(wb: Workbook) -> None:
         if not key:
             continue
         if key not in seen:
-            po_ws.cell(row=r, column=total_qty_col, value=totals.get(key, 0.0))
+            po_ws.cell(row=r, column=total_qty_col, value=int_if_whole(totals.get(key, 0.0)))
             seen.add(key)
         else:
             po_ws.cell(row=r, column=total_qty_col, value=None)

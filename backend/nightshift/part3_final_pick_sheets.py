@@ -16,6 +16,7 @@ from .sheet_utils import (
     header_map,
     iter_data_rows,
     find_header_row,
+    int_if_whole,
 )
 
 from .pdf_utils import render_keep_together_pdf
@@ -204,7 +205,7 @@ def _build_po_report(wb: Workbook, job_dir: str) -> tuple[str, str]:
         for vals in vendor_groups[vendor]:
             row_data = [
                 vals[qty_idx - 1] if qty_idx else "",
-                vals[total_qty_idx - 1] if len(vals) >= total_qty_idx else "",
+                int_if_whole(vals[total_qty_idx - 1]) if len(vals) >= total_qty_idx else "",
                 vals[pname_idx - 1] if pname_idx else "",
                 vals[code_idx - 1] if code_idx else "",
                 vals[price_idx - 1] if price_idx else "",
@@ -418,7 +419,7 @@ def _add_freezer_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
         for r in rows:
             code_val = r[c_idx] if c_idx >= 0 and c_idx < len(r) else None
             key = code_key(code_val)
-            tqty = totals[key] if key not in seen_codes else ""
+            tqty = int_if_whole(totals[key]) if key not in seen_codes else ""
             seen_codes.add(key)
 
             row_data = [
@@ -735,7 +736,7 @@ def _get_freezer_groups(wb):
         for r in rows:
             c_val = r[c_idx] if c_idx >= 0 and c_idx < len(r) else None
             key = code_key(c_val)
-            tqty = totals[key] if key not in seen else ""
+            tqty = int_if_whole(totals[key]) if key not in seen else ""
             seen.add(key)
             d_val = str(r[driver_col-1]) if driver_col and driver_col <= len(r) else ""
 

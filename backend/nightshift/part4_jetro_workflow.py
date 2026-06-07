@@ -15,6 +15,7 @@ from .sheet_utils import (
     header_map,
     iter_data_rows,
     find_header_row,
+    int_if_whole,
 )
 
 from .pdf_utils import render_keep_together_pdf
@@ -264,7 +265,7 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
         pname = str(r[pname_idx-1]).lower() if pname_idx and pname_idx <= len(r) else ""
         tqty = ""
         if pname not in seen_pnames:
-            tqty = totals[pname]
+            tqty = int_if_whole(totals[pname])
             seen_pnames.add(pname)
             
         bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""

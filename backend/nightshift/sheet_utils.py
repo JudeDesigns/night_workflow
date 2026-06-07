@@ -172,6 +172,24 @@ def row_values(ws: Worksheet, row_idx: int) -> list[Any]:
     return [c.value for c in ws[row_idx]]
 
 
+def int_if_whole(value: Any) -> Any:
+    """Return int(value) when value is an integer-valued number, else value.
+
+    Hides the trailing ``.0`` on aggregated totals (Qty / Total Qty) that
+    happen to be whole numbers. Strings and non-numeric values pass through
+    unchanged.
+    """
+    if value is None or value == "":
+        return value
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return value
+    if f == int(f):
+        return int(f)
+    return f
+
+
 # Map of header typos found in real-world source files -> canonical spelling.
 # Applied once at the start of Part 1 so every downstream lookup that asks for
 # the canonical name finds the column regardless of how it's spelled.

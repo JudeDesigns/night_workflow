@@ -54,52 +54,77 @@ def render_keep_together_pdf(
         tr.produce td {{ background-color: #D3D3D3; }}
     """
 
-    def _fits_one_page(block: dict[str, Any], font_size: float) -> bool:
-        """Render the block standalone and return True iff it fits on 1 page."""
+    def _fits_pages(block: dict[str, Any], font_size: float, max_pages: int) -> bool:
+        """Render the block standalone and return True iff it fits in max_pages."""
         block_html = template_func(block, font_size)
         temp_html = f"<html><head><style>{base_css}</style></head><body>{block_html}</body></html>"
         doc = HTML(string=temp_html).render(stylesheets=[CSS(string=base_css)])
-        return len(doc.pages) <= 1
+        return len(doc.pages) <= max_pages
 
     final_html_parts = []
 
-    # Spec §8.4 keep-together: every atomic block must fit on a single page.
-    # Strategy:
-    #   1. Start at 10pt (the ideal readable size).
-    #   2. If a heuristic suggests we need to start smaller (long blocks), do so.
-    #   3. Verify by rendering standalone; if it still overflows, shrink by
-    #      0.88x and re-verify. Loop up to MAX_ATTEMPTS times. There is no hard
-    #      minimum font floor (spec: "fitting on one page always wins").
+    # Fitting strategy:
+    #   Phase 1 — Try to fit on a single page at a readable font (>= READABLE_MIN).
+    #             Start at 10pt and shrink by 0.88x per attempt.
+    #   Phase 2 — If a single page would require shrinking below READABLE_MIN,
+    #             allow the block to span 2 pages instead. Restart at 10pt, shrink
+    #             only if 2 pages still doesn't fit. The spanning block claims
+    #             both pages exclusively (page-break-after: always on the wrapper
+    #             prevents the next block from sharing the second page) and rows
+    #             never split mid-row (page-break-inside: avoid on every <tr>).
     MAX_ATTEMPTS = 10
     SHRINK_FACTOR = 0.88
-    HARD_MIN = 3.5  # Practical floor — below this, the page is nearly unreadable
-                    # anyway and we accept the result rather than loop forever.
+    READABLE_MIN = 8.0  # below this, single-page mode is rejected in favor of 2-page span
+    HARD_MIN = 3.5      # absolute floor for the 2-page attempt
 
     for i, block in enumerate(blocks):
         row_count = len(block.get("rows", []))
 
-        # Heuristic initial guess. The 1.7 factor (vs the old 1.4) accounts for
-        # product-name wrapping that frequently doubles row height in practice.
+        # Heuristic initial guess for Phase 1. The 1.7 factor accounts for
+        # product-name wrapping that often doubles row height in practice.
         if row_count <= 12:
             best_font = 10.0
         else:
             heuristic = avail_points / ((row_count + 5) * 1.7)
-            best_font = min(10.0, max(HARD_MIN, heuristic))
+            best_font = min(10.0, max(READABLE_MIN, heuristic))
 
-        # Iterative verification: shrink until the block fits on one page.
+        # Phase 1 — fit on one page at >= READABLE_MIN.
+        fits_one = False
         attempts = 0
-        while attempts < MAX_ATTEMPTS and best_font >= HARD_MIN:
-            if _fits_one_page(block, best_font):
+        while attempts < MAX_ATTEMPTS and best_font >= READABLE_MIN:
+            if _fits_pages(block, best_font, 1):
+                fits_one = True
                 break
             best_font *= SHRINK_FACTOR
             attempts += 1
-        else:
-            # Loop exited without fitting; clamp to HARD_MIN and accept.
-            best_font = max(best_font, HARD_MIN)
 
-        # When the block needed scaling, force it onto its own page so
-        # neighbouring blocks can't push it across a boundary at render time.
-        css_class = "block-force-new-page" if best_font < 10.0 else "block-avoid-break"
+        if fits_one:
+            span_pages = 1
+        else:
+            # Phase 2 — allow 2 pages. Reset to 10pt (no need to shrink yet).
+            span_pages = 2
+            best_font = 10.0
+            attempts = 0
+            while attempts < MAX_ATTEMPTS and best_font >= HARD_MIN:
+                if _fits_pages(block, best_font, 2):
+                    break
+                best_font *= SHRINK_FACTOR
+                attempts += 1
+            else:
+                best_font = max(best_font, HARD_MIN)
+
+        # Wrapper class selection:
+        #   - 2-page span: claim both pages exclusively (break before AND after).
+        #     Do NOT set page-break-inside: avoid — the block must be allowed
+        #     to break across the two pages.
+        #   - 1-page but shrunk: force a fresh page so neighbours can't push it.
+        #   - 1-page at 10pt: just avoid mid-block breaks.
+        if span_pages == 2:
+            css_class = "block-span-pages"
+        elif best_font < 10.0:
+            css_class = "block-force-new-page"
+        else:
+            css_class = "block-avoid-break"
         final_html_parts.append(
             f'<div id="block-{i}" class="{css_class}">{template_func(block, best_font)}</div>'
         )
@@ -111,6 +136,13 @@ def render_keep_together_pdf(
             {base_css}
             .block-avoid-break {{ page-break-inside: avoid; margin-bottom: 30px; }}
             .block-force-new-page {{ page-break-before: always; page-break-inside: avoid; }}
+            /* A block that intentionally spans 2 pages: claim both pages
+               exclusively via break-before + break-after. Crucially, do NOT
+               set page-break-inside: avoid here — the block must break. */
+            .block-span-pages {{ page-break-before: always; page-break-after: always; }}
+            /* Never split a row across pages — when a block spans pages, the
+               break always lands between rows. */
+            tr {{ page-break-inside: avoid; }}
         </style>
     </head>
     <body>
