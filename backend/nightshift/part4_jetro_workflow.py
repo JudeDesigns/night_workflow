@@ -201,6 +201,42 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
     prod_center_cols = {1, 2, 3, 4, 6, 7, 8, 9}
     set_column_widths(ws_prod, [10, 10, 8, 10, 50, 12, 12, 12, 12, 28, 16])
 
+    # Direct fallback lookup from Shopping History for JTR U/C COST. The Part 1
+    # compile already propagates these into "unit price"/"case price" on Jetro
+    # source, but if a produce code didn't match during the join we re-attempt
+    # the lookup here so the Produce sheet doesn't silently render blanks.
+    sh_index: dict[str, tuple[Any, Any]] = {}
+    try:
+        sh = find_sheet(wb, K.SHEET_SHOPPING_HISTORY)
+        sh_hmap = header_map(sh, known_headers=["Item", "Unit Price", "Case Price"])
+        sh_item_col = sh_hmap.get("Item")
+        sh_up_col = sh_hmap.get("Unit Price")
+        sh_cp_col = sh_hmap.get("Case Price")
+        if sh_item_col and (sh_up_col or sh_cp_col):
+            for _, sh_vals in iter_data_rows(sh, known_headers=["Item"]):
+                raw = sh_vals[sh_item_col-1] if sh_item_col <= len(sh_vals) else None
+                key = code_key(raw)
+                if not key or key in sh_index:
+                    continue
+                up = sh_vals[sh_up_col-1] if sh_up_col and sh_up_col <= len(sh_vals) else None
+                cp = sh_vals[sh_cp_col-1] if sh_cp_col and sh_cp_col <= len(sh_vals) else None
+                sh_index[key] = (up, cp)
+    except KeyError:
+        pass
+
+    def _sh_lookup(code_val: Any) -> tuple[Any, Any]:
+        """Return (unit_price, case_price) from Shopping History, or (None, None)."""
+        k = code_key(code_val)
+        if k in sh_index:
+            return sh_index[k]
+        # Loose match: strip a trailing U/C from either side (Spec §2).
+        from .codes import code_key_loose
+        kl = code_key_loose(code_val)
+        for sk, val in sh_index.items():
+            if code_key_loose(sk) == kl:
+                return val
+        return (None, None)
+
     # Filter produce rows
     produce_rows = []
     for _, values in iter_data_rows(src):
@@ -239,6 +275,19 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
         # Product Info: ProductName/Product/Code
         p_info = f"{r[pname_idx-1] if pname_idx and pname_idx <= len(r) else ''}/{r[prod_idx-1] if prod_idx and prod_idx <= len(r) else ''}/{r[code_idx-1] if code_idx and code_idx <= len(r) else ''}".replace("//", "/")
 
+        # JTR U/C COST — propagated from Shopping History via Part 1 compile.
+        # Fall back to a direct Shopping History lookup if the propagated value
+        # is missing (covers codes that didn't match during the Part 1 join).
+        up_col = hmap.get("unit price")
+        cp_col = hmap.get("case price")
+        up_val = r[up_col-1] if up_col and up_col <= len(r) else None
+        cp_val = r[cp_col-1] if cp_col and cp_col <= len(r) else None
+        if (up_val in (None, "")) or (cp_val in (None, "")):
+            code_for_lookup = r[code_idx-1] if code_idx and code_idx <= len(r) else None
+            sh_up, sh_cp = _sh_lookup(code_for_lookup)
+            if up_val in (None, ""): up_val = sh_up if sh_up is not None else ""
+            if cp_val in (None, ""): cp_val = sh_cp if sh_cp is not None else ""
+
         row_data = [
             bin_val,
             new_bin_val,
@@ -248,8 +297,8 @@ def _build_jetro_excel(wb: Workbook, job_dir: str, blocks: list[dict[str, Any]],
             # Sell price = Price (column M) per PRD §6.7/§6.1.
             (r[hmap.get("Price")-1] if hmap.get("Price") and hmap.get("Price") <= len(r) else ""),
             r[hmap.get("CURRENT COST PRICE")-1] if hmap.get("CURRENT COST PRICE") and hmap.get("CURRENT COST PRICE") <= len(r) else (r[hmap.get("Cost")-1] if hmap.get("Cost") and hmap.get("Cost") <= len(r) else ""),
-            r[hmap.get("unit price")-1] if hmap.get("unit price") and hmap.get("unit price") <= len(r) else "",
-            r[hmap.get("case price")-1] if hmap.get("case price") and hmap.get("case price") <= len(r) else "",
+            up_val if up_val is not None else "",
+            cp_val if cp_val is not None else "",
             r[cust_idx-1] if cust_idx and cust_idx <= len(r) else "",
             r[hmap.get("Driver")-1] if hmap.get("Driver") and hmap.get("Driver") <= len(r) else ""
         ]
@@ -336,31 +385,30 @@ def _build_jetro_pdf(wb: Workbook, job_dir: str) -> tuple[str, list[tuple[int, i
     def template(block, font_size):
         rows_html = ""
         for r in block["rows"]:
-            # Col A shows Internal bin (office update); New bin blanking follows
-            # PRD §6.4: blank when it equals the Jetro Bin (column F).
-            ib_val = r[internal_bin_idx-1] if internal_bin_idx and internal_bin_idx <= len(r) else ""
+            # PRD §6.4: col A is the numeric Jetro Bin (source column F), matching
+            # the Excel Jetro Page. New bin is blanked when it equals Bin.
             bin_val = r[bin_idx-1] if bin_idx and bin_idx <= len(r) else ""
             new_bin_val = r[new_bin_idx-1] if new_bin_idx and new_bin_idx <= len(r) else ""
             if str(new_bin_val).strip().upper() == str(bin_val).strip().upper(): new_bin_val = ""
-            
+
             pname = r[pname_idx-1] if pname_idx and pname_idx <= len(r) else ""
             desc = r[desc_idx-1] if desc_idx and desc_idx <= len(r) else ""
             prod = r[prod_idx-1] if prod_idx and prod_idx <= len(r) else ""
             code = r[code_idx-1] if code_idx and code_idx <= len(r) else ""
             p_merge = f"{pname}/{desc}/{prod}/{code}".replace("//", "/")
-            
+
             is_produce = str(r[cat_idx-1]).lower() == "produce" if cat_idx and cat_idx <= len(r) else False
-            
+
             rows_html += f"""
                 <tr class="{'produce' if is_produce else ''}">
-                    <td>{ib_val}</td>
+                    <td>{bin_val}</td>
                     <td>{new_bin_val}</td>
                     <td class="centered">{r[qty_idx-1] if qty_idx and qty_idx <= len(r) else ""}</td>
                     <td>{p_merge}</td>
                     <td class="centered">{r[qoh_idx-1] if qoh_idx and qoh_idx <= len(r) else ""}</td>
                 </tr>
             """
-            
+
         return f"""
         <div style="font-size: {font_size}pt;">
             <style>
@@ -371,7 +419,7 @@ def _build_jetro_pdf(wb: Workbook, job_dir: str) -> tuple[str, list[tuple[int, i
                 <thead>
                     <tr><th colspan="5" class="header">{block['title']}</th></tr>
                     <tr>
-                        <th>Internal bin</th>
+                        <th>Bin</th>
                         <th>New bin</th>
                         <th class="centered">Qty</th>
                         <th>Product</th>

@@ -5,7 +5,10 @@ description = "B&R Food Services Night Shift Reports automation"
 requires-python = ">=3.11"
 dependencies = [
     "openpyxl>=3.1",
-    "weasyprint>=62",
+    # WeasyPrint 53+ requires Pango>=1.44, which isn't in AlmaLinux 8's
+    # default repos (it ships 1.42). 52.5 is the last release that works
+    # with Pango 1.38+ and is API-compatible with our usage (HTML.write_pdf).
+    "weasyprint>=52,<53",
     "pypdf>=4.2",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",

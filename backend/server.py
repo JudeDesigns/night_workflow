@@ -310,6 +310,8 @@ async def run_part1(file: UploadFile = File(...)):
         preview = _extract_preview(wb)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Part 1 processing failed: {e}")
 
     return {"jobId": job_id, "status": "part1_complete", "preview": preview}
@@ -513,6 +515,8 @@ async def run_part2(payload: dict[str, Any]):
             "status": "part2_complete",
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Part 2 processing failed: {e}")
 
 @app.post("/part3-4")
@@ -553,4 +557,6 @@ async def run_part3_4(payload: dict[str, Any]):
             "outputs": all_outputs
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Part 3/4 processing failed: {e}")

@@ -700,14 +700,17 @@ def _get_freezer_groups(wb):
     name_col = hmap.get("Name")
     qoh_col = hmap.get("Quantity On Hand")
     
-    driver_seq = _get_driver_sequence(wb)
+    # Strip both sides — source rows often carry trailing whitespace on Driver
+    # that the Driver Setup sequence does not. Without normalization the
+    # membership check always fails and every row falls into "Freezer two".
+    driver_seq = [str(d).strip() for d in _get_driver_sequence(wb)]
     f1_drivers = set(driver_seq[:3])
-    
+
     groups = {"Freezer one": [], "Freezer two": []}
     for _, r in iter_data_rows(ws):
         bin_val = str(r[bin_col-1] or "") if bin_col and bin_col <= len(r) else ""
         if bin_val.upper() == "FREEZER":
-            driver = str(r[driver_col-1]) if driver_col and driver_col <= len(r) else ""
+            driver = str(r[driver_col-1] or "").strip() if driver_col and driver_col <= len(r) else ""
             g = "Freezer one" if driver in f1_drivers else "Freezer two"
             groups[g].append(r)
             
