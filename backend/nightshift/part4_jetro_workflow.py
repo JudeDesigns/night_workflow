@@ -88,7 +88,10 @@ def _sort_jetro_source(wb: Workbook) -> None:
             rows.append(list(values))
             
         def sort_key(r):
-            d = str(r[driver_col-1] or "")
+            # Strip both sides — Driver Setup stores trimmed names but source
+            # rows often carry trailing whitespace. Without .strip() the rank
+            # lookup returns 999 and every row is sorted to the end.
+            d = str(r[driver_col-1] or "").strip()
             c = str(r[cust_col-1] or "").lower()
             try:
                 b = float(r[bin_col-1] or 0)
@@ -417,11 +420,18 @@ def _build_jetro_pdf(wb: Workbook, job_dir: str) -> tuple[str, list[tuple[int, i
                 .centered {{ text-align: center; }}
             </style>
             <table>
+                <colgroup>
+                    <col style="width:7%">
+                    <col style="width:7%">
+                    <col style="width:5%">
+                    <col style="width:74%">
+                    <col style="width:7%">
+                </colgroup>
                 <thead>
                     <tr><th colspan="5" class="header">{block['title']}</th></tr>
                     <tr>
-                        <th>Bin</th>
-                        <th>New bin</th>
+                        <th class="centered">Bin</th>
+                        <th class="centered">New bin</th>
                         <th class="centered">Qty</th>
                         <th>Product</th>
                         <th class="centered">QTY OH</th>

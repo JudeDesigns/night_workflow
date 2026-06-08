@@ -662,12 +662,13 @@ def _get_dry_groups(wb):
     name_idx = hmap.get("Name")
     qoh_idx = hmap.get("Quantity On Hand")
 
-    groups = defaultdict(list)
+    groups: dict[str, list] = defaultdict(list)
 
     for _, r in iter_data_rows(ws):
         bin_val = str(r[bin_col-1] or "") if bin_col and bin_col <= len(r) else ""
         if bin_val.upper() == "DRY":
-            driver = str(r[driver_col-1] or "") if driver_col and driver_col <= len(r) else "Unknown"
+            # Strip so the key matches the (already-stripped) driver_seq entries.
+            driver = str(r[driver_col-1] or "").strip() if driver_col and driver_col <= len(r) else "Unknown"
 
             pn_val = str(r[pname_idx-1] or "") if pname_idx and pname_idx <= len(r) else ""
             ds_val = str(r[desc_idx-1] or "") if desc_idx and desc_idx <= len(r) else ""
@@ -687,7 +688,14 @@ def _get_dry_groups(wb):
 
     for d in groups:
         groups[d].sort(key=lambda x: str(x["cells"][0] or ""))
-    return groups
+
+    # Return groups in the same driver sequence as the routing page, mirroring
+    # _add_dry_sheet. Drivers present in data but not in setup go at the end.
+    driver_seq = [str(d).strip() for d in _get_driver_sequence(wb)]
+    for extra in groups:
+        if extra not in driver_seq:
+            driver_seq.append(extra)
+    return {d: groups[d] for d in driver_seq if d in groups}
 
 def _get_freezer_groups(wb):
     ws = find_sheet(wb, K.SHEET_ALL_ORDERS)
@@ -773,12 +781,13 @@ def _get_wh_pickup_groups(wb):
         cust_name = str(r[name_col-1] or "Unknown") if name_col and name_col <= len(r) else "Unknown"
         customers[cust_name].append(r)
         
-    driver_seq = _get_driver_sequence(wb)
+    driver_seq = [str(d).strip() for d in _get_driver_sequence(wb)]
     driver_rank = {name: i for i, name in enumerate(driver_seq)}
-    
+
     def cust_sort_key(c):
         rows = customers[c]
-        d_val = str(rows[0][driver_col-1]) if driver_col and driver_col <= len(rows[0]) else ""
+        # Strip so it matches the stripped driver_seq entries.
+        d_val = str(rows[0][driver_col-1] or "").strip() if driver_col and driver_col <= len(rows[0]) else ""
         return driver_rank.get(d_val, 999)
         
     sorted_custs = sorted(customers.keys(), key=cust_sort_key)

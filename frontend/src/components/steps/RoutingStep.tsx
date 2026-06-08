@@ -283,13 +283,15 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                     <th className="w-24 border-r border-b border-border bg-[#e1e3e8] text-[10px] text-muted-foreground font-bold p-0 uppercase">B</th>
                     <th className="w-24 border-r border-b border-border bg-[#e1e3e8] text-[10px] text-muted-foreground font-bold p-0 uppercase">C</th>
                     <th className="w-40 border-r border-b border-border bg-[#e1e3e8] text-[10px] text-muted-foreground font-bold p-0 uppercase">D</th>
-                    <th className="w-44 border-b border-border bg-[#e1e3e8] text-[10px] text-muted-foreground font-bold p-0 uppercase">E</th>
+                    <th className="w-40 border-r border-b border-border bg-[#e1e3e8] text-[10px] text-muted-foreground font-bold p-0 uppercase">E</th>
+                    <th className="w-44 border-b border-border bg-[#e1e3e8] text-[10px] text-muted-foreground font-bold p-0 uppercase">F</th>
                   </tr>
                   <tr className="bg-[#f8f9fa] border-b border-border shadow-sm">
                     <th className="border-r border-border p-1 bg-[#f8f9fa]"></th>
                     <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-muted-foreground uppercase tracking-tight">Product Description</th>
                     <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-muted-foreground uppercase tracking-tight">Item ID</th>
                     <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-muted-foreground uppercase tracking-tight">Location</th>
+                    <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-muted-foreground uppercase tracking-tight">Customer</th>
                     <th className="border-r border-border text-left px-2 py-1.5 font-bold text-[10px] text-muted-foreground uppercase tracking-tight">Routing Decision</th>
                     <th className="text-left px-2 py-1.5 font-bold text-[10px] text-muted-foreground uppercase tracking-tight">Logistics Provider</th>
                   </tr>
@@ -332,6 +334,11 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                           className="w-full h-full bg-transparent border-none focus:ring-1 focus:ring-primary rounded-none px-2 py-1 italic text-muted-foreground/80 outline-none"
                         />
                       </td>
+                      <td className="border-r border-border p-0">
+                        <span className="block px-2 py-1 text-[11px] text-muted-foreground truncate" title={String(getVal(row, "customer") ?? "")}>
+                          {String(getVal(row, "customer") ?? "")}
+                        </span>
+                      </td>
                       <td className={`border-r border-border p-0 relative ${selectedRowId === row.id ? "bg-white shadow-inner" : ""}`}>
                         <select 
                           value={sheetDecisions[row.id]?.sheet || "All Orders"} 
@@ -371,7 +378,7 @@ export default function RoutingStep({ jobId, previewData, onNext }: Props) {
                   ))}
                   {filteredRows.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="h-32 text-center text-muted-foreground italic text-xs">
+                      <td colSpan={7} className="h-32 text-center text-muted-foreground italic text-xs">
                         No rows found in this sheet.
                       </td>
                     </tr>

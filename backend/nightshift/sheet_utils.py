@@ -156,11 +156,14 @@ def iter_data_rows(ws: Worksheet, known_headers: list[str] | None = None) -> Ite
         if any(noise in meaningful_vals[0].lower() for noise in ["ref number:", "delivery fee:"]):
             continue
 
-        # Skip if the row repeats headers (common in some report exports)
+        # Skip if the row repeats headers (common in some report exports).
+        # Use EXACT match only: a repeated-header row has cells whose value IS
+        # a header name (e.g. a cell that says "Bin"), not merely contains it
+        # as a substring (which would falsely match data like "Oakobing").
         if known_headers:
             match_count = 0
             for val in meaningful_vals:
-                if any(h.lower() in val.lower() for h in known_headers):
+                if any(h.lower() == val.lower() for h in known_headers):
                     match_count += 1
             if match_count >= len(known_headers) - 1 and len(known_headers) > 1:
                 continue

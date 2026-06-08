@@ -60,6 +60,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
             ib_idx = ao_hmap.get("BIN(Internal)") or ao_hmap.get("BIN (Internal)") or ao_hmap.get("internal bin") or ao_hmap.get("BIN")
             ib_val = str(values[ib_idx-1]) if ib_idx and ib_idx <= len(values) else ""
             
+            ao_name_idx = ao_hmap.get("Name")
             ao_rows.append({
                 "id": f"{K.SHEET_ALL_ORDERS}:{row_idx}",
                 "values": values,
@@ -67,6 +68,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
                 "code": values[ao_hmap["Code"] - 1] if "Code" in ao_hmap else "",
                 "bin": ib_val or (values[ao_hmap["Bin"] - 1] if "Bin" in ao_hmap else ""),
                 "vendor": values[ao_hmap["Vendor"] - 1] if "Vendor" in ao_hmap else "",
+                "customer": values[ao_name_idx - 1] if ao_name_idx and ao_name_idx <= len(values) else "",
                 "sheet": values[0], # Col A
                 "vendorRoute": values[1], # Col B
             })
@@ -86,6 +88,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
         for row_idx, values in iter_data_rows(js, known_headers=known_js):
             bin_val = str(values[js_hmap["Bin"] - 1]) if "Bin" in js_hmap else ""
 
+            js_name_idx = js_hmap.get("Name")
             js_rows.append({
                 "id": f"{K.SHEET_JETRO_SOURCE}:{row_idx}",
                 "values": values,
@@ -93,6 +96,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
                 "code": values[js_hmap["Code"] - 1] if "Code" in js_hmap else "",
                 "bin": bin_val,
                 "vendor": values[js_hmap["Vendor"] - 1] if "Vendor" in js_hmap else "",
+                "customer": values[js_name_idx - 1] if js_name_idx and js_name_idx <= len(values) else "",
                 "sheet": values[0],
                 "vendorRoute": values[1],
             })
@@ -112,6 +116,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
             ib_idx = po_hmap.get("BIN(Internal)") or po_hmap.get("BIN (Internal)") or po_hmap.get("internal bin") or po_hmap.get("BIN")
             ib_val = str(values[ib_idx-1]) if ib_idx and ib_idx <= len(values) else ""
             
+            po_name_idx = po_hmap.get("Name")
             po_rows.append({
                 "id": f"{K.SHEET_PO}:{row_idx}",
                 "values": values,
@@ -119,6 +124,7 @@ def _extract_preview(wb: Any) -> dict[str, Any]:
                 "code": values[po_hmap["Code"] - 1] if "Code" in po_hmap else "",
                 "bin": ib_val or (values[po_hmap["Bin"] - 1] if "Bin" in po_hmap else ""),
                 "vendor": values[po_hmap["Vendor"] - 1] if "Vendor" in po_hmap else "",
+                "customer": values[po_name_idx - 1] if po_name_idx and po_name_idx <= len(values) else "",
                 "sheet": values[0],
                 "vendorRoute": values[1],
             })
