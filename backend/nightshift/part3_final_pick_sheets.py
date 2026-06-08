@@ -107,7 +107,7 @@ def _reorder_all_orders(wb: Workbook) -> None:
             rows.append(list(values))
             
         def sort_key(r):
-            d = str(r[driver_col - 1] or "")
+            d = str(r[driver_col - 1] or "").strip()
             return (driver_rank.get(d, 999), d)
             
         rows.sort(key=sort_key)
@@ -463,7 +463,7 @@ def _add_wh_pickup_sheet(wb: Workbook, out_wb: Workbook, today: str) -> None:
     driver_rank = {name: i for i, name in enumerate(driver_seq)}
     
     # Sort customers by driver pull sequence
-    sorted_customers = sorted(customers.keys(), key=lambda c: driver_rank.get(str(customers[c][0][driver_col-1] if driver_col else ""), 999))
+    sorted_customers = sorted(customers.keys(), key=lambda c: driver_rank.get(str(customers[c][0][driver_col-1] if driver_col else "").strip(), 999))
     
     ws = out_wb.create_sheet("WH Pickup")
     headers = ["QTY", "Product Name", "Bin", "Internal bin", "Vendor", "Driver", "QTY OH"]
