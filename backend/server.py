@@ -343,12 +343,42 @@ _OUTPUT_MAP: dict[str, dict[str, str]] = {
         "freezerPdf":  "freezer.pdf",
         "whPickupPdf": "wh_pickup.pdf",
     },
-    "jetroWorkbook":  {"xlsx": "jetro.xlsx"},
-    "jetroPdf":       {"pdf": "jetro_report.pdf"},
-    # Source exports — always present after Part 3/4 runs.
-    "routingWorkbook": {"xlsx": "routing_workbook.xlsx"},
-    "originalUpload":  {"xlsx": "upload.xlsx"},
+    "jetroWorkbook":     {"xlsx": "jetro.xlsx"},
+    "jetroPdf":          {"pdf": "jetro_report.pdf"},
+    # Per-sheet source exports — each routed sheet as its own file.
+    "allOrdersRouted":   {"xlsx": "all_orders_routed.xlsx"},
+    "jetroSourceRouted": {"xlsx": "jetro_source_routed.xlsx"},
+    "whShortageRouted":  {"xlsx": "wh_shortage_routed.xlsx"},
+    "originalUpload":    {"xlsx": "upload.xlsx"},
 }
+
+
+def _export_single_sheet(src_path: Path, sheet_name: str, dest_path: Path) -> None:
+    """Copy src workbook to dest and remove every sheet except sheet_name.
+
+    Uses find_sheet's loose matching so slight title variations still work
+    (e.g. 'All Orders Sheet' matches the constant 'All Orders').
+    """
+    shutil.copy(str(src_path), str(dest_path))
+    try:
+        wb = load_workbook(str(dest_path))
+        # Identify the keeper using the same loose match as find_sheet.
+        target_lower = sheet_name.strip().lower()
+        keeper_title: str | None = None
+        for ws in wb.worksheets:
+            t = ws.title.strip().lower()
+            if t == target_lower or target_lower in t or t in target_lower:
+                keeper_title = ws.title
+                break
+        if keeper_title is None:
+            # Sheet not found — leave the file as-is (best effort).
+            return
+        for ws in wb.worksheets:
+            if ws.title != keeper_title:
+                wb.remove(ws)
+        wb.save(str(dest_path))
+    except Exception:
+        pass  # If extraction fails the file stays as a full copy — harmless.
 
 
 def _collect_outputs(job_dir: Path) -> dict[str, dict[str, str]]:
@@ -552,18 +582,16 @@ async def run_part3_4(payload: dict[str, Any]):
         all_outputs = {**outputs3, **outputs4}
 
         # ----------------------------------------------------------------
-        # Source exports (Spec §7.6 addition):
-        #   1. routing_workbook.xlsx — part2.xlsx renamed for clarity;
-        #      contains All Orders, Jetro source, PO, and WH Shortage with
-        #      every routing decision already applied.
-        #   2. upload.xlsx — the original file the user uploaded.
-        # Both are included in the ZIP and surfaced as download links in
-        # the UI (view is suppressed; download-only per operational request).
+        # Source exports — each routed sheet as its own xlsx file plus the
+        # original upload. Extracted from part2.xlsx (all routing applied).
         # ----------------------------------------------------------------
-        routing_wb_path = job_dir / "routing_workbook.xlsx"
-        shutil.copy(str(part2_path), str(routing_wb_path))
+        _export_single_sheet(part2_path, K.SHEET_ALL_ORDERS,      job_dir / "all_orders_routed.xlsx")
+        _export_single_sheet(part2_path, K.SHEET_JETRO_SOURCE,    job_dir / "jetro_source_routed.xlsx")
+        _export_single_sheet(part2_path, K.SHEET_WAREHOUSE_SHORT, job_dir / "wh_shortage_routed.xlsx")
 
-        all_outputs["routingWorkbook"] = {"xlsx": "routing_workbook.xlsx"}
+        all_outputs["allOrdersRouted"]   = {"xlsx": "all_orders_routed.xlsx"}
+        all_outputs["jetroSourceRouted"] = {"xlsx": "jetro_source_routed.xlsx"}
+        all_outputs["whShortageRouted"]  = {"xlsx": "wh_shortage_routed.xlsx"}
         upload_path = job_dir / "upload.xlsx"
         if upload_path.exists():
             all_outputs["originalUpload"] = {"xlsx": "upload.xlsx"}

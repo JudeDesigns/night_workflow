@@ -61,10 +61,24 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
       color: "bg-orange-600",
     },
     {
-      title: "Routing Workbook",
-      description: "All Orders, Jetro Source & WH Shortage — with routing applied",
-      xlsx: outputs?.routingWorkbook?.xlsx,
+      title: "All Orders (Routed)",
+      description: "All Orders sheet with routing decisions applied",
+      xlsx: outputs?.allOrdersRouted?.xlsx,
       color: "bg-purple-500",
+      downloadOnly: true,
+    },
+    {
+      title: "Jetro Source (Routed)",
+      description: "Jetro Source sheet with routing decisions applied",
+      xlsx: outputs?.jetroSourceRouted?.xlsx,
+      color: "bg-purple-400",
+      downloadOnly: true,
+    },
+    {
+      title: "WH Shortage (Routed)",
+      description: "Warehouse Shortage sheet with routing decisions applied",
+      xlsx: outputs?.whShortageRouted?.xlsx,
+      color: "bg-purple-600",
       downloadOnly: true,
     },
     {
