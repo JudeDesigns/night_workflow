@@ -16,6 +16,7 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
 
   // PDFs is a list so the Pick Sheets card can surface 3 separate downloads
   // (Dry / Freezer / WH Pickup) while every other card has at most one PDF.
+  // downloadOnly suppresses the View button for files that are download-only.
   type Report = {
     title: string
     description: string
@@ -23,6 +24,7 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
     pdf?: string | null
     pdfs?: { label: string; file: string | null | undefined }[]
     color: string
+    downloadOnly?: boolean
   }
 
   const reports: Report[] = [
@@ -58,6 +60,20 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
       pdf: outputs?.jetroPdf?.pdf,
       color: "bg-orange-600",
     },
+    {
+      title: "Routing Workbook",
+      description: "All Orders, Jetro Source & WH Shortage — with routing applied",
+      xlsx: outputs?.routingWorkbook?.xlsx,
+      color: "bg-purple-500",
+      downloadOnly: true,
+    },
+    {
+      title: "Original Upload",
+      description: "The source file submitted at the start of this shift",
+      xlsx: outputs?.originalUpload?.xlsx,
+      color: "bg-slate-400",
+      downloadOnly: true,
+    },
   ]
 
   return (
@@ -90,15 +106,17 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
             <CardContent className="pt-6 flex flex-wrap gap-2">
               {report.xlsx && (
                 <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 min-w-[88px] gap-2 h-11 font-bold rounded-xl border-border/60 hover:bg-primary/5 hover:text-primary hover:border-primary/20 transition-all"
-                    onClick={() => setViewing({ filename: report.xlsx!, title: report.title })}
-                  >
-                    <Eye className="w-4 h-4 text-primary" />
-                    View
-                  </Button>
+                  {!report.downloadOnly && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 min-w-[88px] gap-2 h-11 font-bold rounded-xl border-border/60 hover:bg-primary/5 hover:text-primary hover:border-primary/20 transition-all"
+                      onClick={() => setViewing({ filename: report.xlsx!, title: report.title })}
+                    >
+                      <Eye className="w-4 h-4 text-primary" />
+                      View
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"

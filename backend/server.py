@@ -343,8 +343,11 @@ _OUTPUT_MAP: dict[str, dict[str, str]] = {
         "freezerPdf":  "freezer.pdf",
         "whPickupPdf": "wh_pickup.pdf",
     },
-    "jetroWorkbook": {"xlsx": "jetro.xlsx"},
-    "jetroPdf":      {"pdf": "jetro_report.pdf"},
+    "jetroWorkbook":  {"xlsx": "jetro.xlsx"},
+    "jetroPdf":       {"pdf": "jetro_report.pdf"},
+    # Source exports — always present after Part 3/4 runs.
+    "routingWorkbook": {"xlsx": "routing_workbook.xlsx"},
+    "originalUpload":  {"xlsx": "upload.xlsx"},
 }
 
 
@@ -547,7 +550,24 @@ async def run_part3_4(payload: dict[str, Any]):
         
         # Merge outputs
         all_outputs = {**outputs3, **outputs4}
-        
+
+        # ----------------------------------------------------------------
+        # Source exports (Spec §7.6 addition):
+        #   1. routing_workbook.xlsx — part2.xlsx renamed for clarity;
+        #      contains All Orders, Jetro source, PO, and WH Shortage with
+        #      every routing decision already applied.
+        #   2. upload.xlsx — the original file the user uploaded.
+        # Both are included in the ZIP and surfaced as download links in
+        # the UI (view is suppressed; download-only per operational request).
+        # ----------------------------------------------------------------
+        routing_wb_path = job_dir / "routing_workbook.xlsx"
+        shutil.copy(str(part2_path), str(routing_wb_path))
+
+        all_outputs["routingWorkbook"] = {"xlsx": "routing_workbook.xlsx"}
+        upload_path = job_dir / "upload.xlsx"
+        if upload_path.exists():
+            all_outputs["originalUpload"] = {"xlsx": "upload.xlsx"}
+
         # Create a zip of all outputs (Spec §7.6)
         zip_path = job_dir / "all_outputs.zip"
         with zipfile.ZipFile(zip_path, "w") as zf:
@@ -556,7 +576,7 @@ async def run_part3_4(payload: dict[str, Any]):
                     full_path = job_dir / file_rel_path
                     if full_path.exists():
                         zf.write(full_path, file_rel_path)
-        
+
         return {
             "jobId": job_id,
             "status": "complete",

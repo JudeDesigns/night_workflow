@@ -197,8 +197,10 @@ def apply_warehouse_short_routing(wb: Workbook, ws_decisions: list[dict[str, Any
             target_ws_name = K.SHEET_ALL_ORDERS
             new_bin = update_vendor
         elif update_vendor.lower() == K.WH_ROUTING_WH.lower():
-            target_ws_name = K.SHEET_PO
-            new_vendor = K.WH_ROUTING_WH
+            # Route to All Orders (not PO) so the item appears in the
+            # WH Pickup report. The row's original Bin and Vendor are
+            # preserved — no override needed.
+            target_ws_name = K.SHEET_ALL_ORDERS
         else:
             target_ws_name = K.SHEET_PO
             new_vendor = update_vendor
