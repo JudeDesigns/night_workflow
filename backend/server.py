@@ -348,6 +348,7 @@ _OUTPUT_MAP: dict[str, dict[str, str]] = {
     # Per-sheet source exports — each routed sheet as its own file.
     "allOrdersRouted":   {"xlsx": "all_orders_routed.xlsx"},
     "jetroSourceRouted": {"xlsx": "jetro_source_routed.xlsx"},
+    "poRouted":          {"xlsx": "po_routed.xlsx"},
     "whShortageRouted":  {"xlsx": "wh_shortage_routed.xlsx"},
     "originalUpload":    {"xlsx": "upload.xlsx"},
 }
@@ -587,10 +588,12 @@ async def run_part3_4(payload: dict[str, Any]):
         # ----------------------------------------------------------------
         _export_single_sheet(part2_path, K.SHEET_ALL_ORDERS,      job_dir / "all_orders_routed.xlsx")
         _export_single_sheet(part2_path, K.SHEET_JETRO_SOURCE,    job_dir / "jetro_source_routed.xlsx")
+        _export_single_sheet(part2_path, K.SHEET_PO,              job_dir / "po_routed.xlsx")
         _export_single_sheet(part2_path, K.SHEET_WAREHOUSE_SHORT, job_dir / "wh_shortage_routed.xlsx")
 
         all_outputs["allOrdersRouted"]   = {"xlsx": "all_orders_routed.xlsx"}
         all_outputs["jetroSourceRouted"] = {"xlsx": "jetro_source_routed.xlsx"}
+        all_outputs["poRouted"]          = {"xlsx": "po_routed.xlsx"}
         all_outputs["whShortageRouted"]  = {"xlsx": "wh_shortage_routed.xlsx"}
         upload_path = job_dir / "upload.xlsx"
         if upload_path.exists():

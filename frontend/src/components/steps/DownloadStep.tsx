@@ -75,6 +75,13 @@ export default function DownloadStep({ jobId, outputs, onReset }: Props) {
       downloadOnly: true,
     },
     {
+      title: "PO Source (Routed)",
+      description: "PO sheet with routing decisions applied",
+      xlsx: outputs?.poRouted?.xlsx,
+      color: "bg-indigo-500",
+      downloadOnly: true,
+    },
+    {
       title: "WH Shortage (Routed)",
       description: "Warehouse Shortage sheet with routing decisions applied",
       xlsx: outputs?.whShortageRouted?.xlsx,
